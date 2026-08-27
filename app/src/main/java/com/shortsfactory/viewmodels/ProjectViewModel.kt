@@ -1,25 +1,20 @@
 package com.shortsfactory.viewmodels
 
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.work.WorkInfo
+import com.shortsfactory.app.work.ShortsWorkScheduler
+import com.shortsfactory.app.work.WorkKeys
 import com.shortsfactory.data.local.entity.ProjectEntity
-import com.shortsfactory.data.repository.AIAnalysisRepository
+import com.shortsfactory.data.local.entity.ShortEntity
 import com.shortsfactory.data.repository.ProjectRepository
 import com.shortsfactory.data.repository.ShortRepository
-import com.shortsfactory.data.repository.TranscriptRepository
 import com.shortsfactory.data.repository.VideoImporter
-import com.shortsfactory.domain.ai.AIProvider
-import com.shortsfactory.domain.model.Transcript
-import com.shortsfactory.domain.model.TranscriptSegment
-import com.shortsfactory.domain.pipeline.AudioExtractorService
-import com.shortsfactory.domain.pipeline.CandidateSelector
-import com.shortsfactory.domain.pipeline.GenerationConfig
-import com.shortsfactory.domain.pipeline.MediaAnalysisPipeline
 import com.shortsfactory.domain.pipeline.PipelineProgress
 import com.shortsfactory.domain.pipeline.PipelineStage
 import com.shortsfactory.domain.pipeline.StageProgress
 import com.shortsfactory.domain.pipeline.StageState
-import com.shortsfactory.domain.pipeline.TranscriptionService
 import com.shortsfactory.domain.pipeline.VideoEngine
 import com.shortsfactory.projects.CandidateUi
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -27,6 +22,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import java.io.File
 import javax.inject.Inject
@@ -35,23 +31,10 @@ import javax.inject.Inject
 class ProjectViewModel @Inject constructor(
     private val projectRepository: ProjectRepository,
     private val shortRepository: ShortRepository,
-    private val transcriptRepository: TranscriptRepository,
-    private val aiAnalysisRepository: AIAnalysisRepository,
     private val videoImporter: VideoImporter,
     private val videoEngine: VideoEngine,
-    private val aiProvider: AIProvider
+    private val workScheduler: ShortsWorkScheduler
 ) : ViewModel() {
-
-    private val pipeline = MediaAnalysisPipeline(
-        aiProvider = aiProvider,
-        candidateSelector = CandidateSelector(),
-        audioExtractor = object : AudioExtractorService {
-            override suspend fun extract(videoPath: String, outputPath: String) {
-                videoEngine.extractAudio(videoPath, outputPath)
-            }
-        },
-        transcription = DemoTranscriptionService(videoEngine)
-    )
 
     private val _project = MutableStateFlow<ProjectEntity?>(null)
     private val _progress = MutableStateFlow<PipelineProgress?>(null)
@@ -60,7 +43,8 @@ class ProjectViewModel @Inject constructor(
     private val _localPath = MutableStateFlow<String?>(null)
     private val _createdProjectId = MutableStateFlow<Long?>(null)
     private val _error = MutableStateFlow<String?>(null)
-    private var analysisJob: Job? = null
+    private var candidateObservationJob: Job? = null
+    private var analysisObservationJob: Job? = null
 
     val progress: StateFlow<PipelineProgress?> = _progress.asStateFlow()
     val candidates: StateFlow<List<CandidateUi>> = _candidates.asStateFlow()
@@ -69,33 +53,27 @@ class ProjectViewModel @Inject constructor(
     val error: StateFlow<String?> = _error.asStateFlow()
 
     fun load(projectId: Long) {
-        if (_createdProjectId.value == projectId && _localPath.value != null) return
         viewModelScope.launch {
             val project = projectRepository.getById(projectId) ?: return@launch
             _createdProjectId.value = project.id
             _project.value = project
             _localPath.value = project.videoUri
+            _progress.value = progressFromProject(project)
+            observeCandidates(projectId)
+            observeAnalysis(projectId)
         }
     }
 
     fun setSource(uriStr: String) {
         viewModelScope.launch {
             _error.value = null
-            _progress.value = PipelineProgress(
-                projectId = 0,
-                stages = PipelineStage.values().map { stage ->
-                    StageProgress(
-                        stage = stage,
-                        state = if (stage == PipelineStage.VideoInput) StageState.PROCESSING else StageState.PENDING
-                    )
-                }
-            )
+            _progress.value = initialProgress()
             try {
                 val result = when {
                     uriStr.startsWith("http://") || uriStr.startsWith("https://") ->
                         videoImporter.downloadFromUrl(uriStr)
                     uriStr.isNotEmpty() ->
-                        videoImporter.importFromUri(android.net.Uri.parse(uriStr))
+                        videoImporter.importFromUri(Uri.parse(uriStr))
                     else -> VideoImporter.ImportResult.Failure("Fonte de vídeo não informada.")
                 }
                 when (result) {
@@ -112,7 +90,9 @@ class ProjectViewModel @Inject constructor(
                                 videoHeight = info.height,
                                 videoSizeBytes = File(result.localPath).length(),
                                 sourceType = if (uriStr.startsWith("http")) "url" else "local",
-                                sourceUrl = if (uriStr.startsWith("http")) uriStr else null
+                                sourceUrl = if (uriStr.startsWith("http")) uriStr else null,
+                                analysisStatus = "idle",
+                                analysisProgress = 0f
                             )
                         )
                         _createdProjectId.value = projectId
@@ -120,6 +100,8 @@ class ProjectViewModel @Inject constructor(
                         _localPath.value = result.localPath
                         updateProgressProjectId(projectId)
                         updateStage(PipelineStage.VideoInput, StageState.COMPLETED, 1f)
+                        observeCandidates(projectId)
+                        observeAnalysis(projectId)
                     }
                     is VideoImporter.ImportResult.Failure -> {
                         _error.value = result.message
@@ -140,58 +122,13 @@ class ProjectViewModel @Inject constructor(
             _error.value = "Importe um vídeo antes de iniciar a análise."
             return
         }
-        analysisJob?.cancel()
-        analysisJob = viewModelScope.launch {
-            _error.value = null
-            val outcome = pipeline.analyze(
-                videoPath = path,
-                config = GenerationConfig(
-                    preset = _selectedPreset.value,
-                    maxCandidates = 12
-                ),
-                onStageUpdate = { stageProgress ->
-                    val current = _progress.value ?: PipelineProgress(
-                        projectId = projectId,
-                        stages = PipelineStage.values().map { StageProgress(it, StageState.PENDING) }
-                    )
-                    _progress.value = current.copy(
-                        projectId = projectId,
-                        stages = current.stages.map { existing ->
-                            if (existing.stage == stageProgress.stage) stageProgress else existing
-                        }
-                    )
-                }
-            )
-            when (outcome) {
-                is com.shortsfactory.domain.pipeline.AnalysisOutcome.Success -> {
-                    transcriptRepository.save(projectId, outcome.transcript)
-                    aiAnalysisRepository.save(projectId, aiProvider.providerName, outcome.result)
-                    val ids = shortRepository.insertCandidates(projectId, outcome.selected)
-                    _candidates.value = outcome.selected.mapIndexed { index, candidate ->
-                        CandidateUi(
-                            id = ids.getOrNull(index) ?: index.toLong(),
-                            score = candidate.score,
-                            startMs = candidate.startMs,
-                            endMs = candidate.endMs,
-                            title = candidate.title,
-                            hook = candidate.hook,
-                            topic = candidate.topic,
-                            reason = candidate.reason
-                        )
-                    }
-                }
-                is com.shortsfactory.domain.pipeline.AnalysisOutcome.Failed -> {
-                    _error.value = outcome.message
-                }
-                is com.shortsfactory.domain.pipeline.AnalysisOutcome.Cancelled -> {
-                    _error.value = "Análise cancelada."
-                }
-            }
-        }
+        _error.value = null
+        _progress.value = _progress.value ?: initialProgress(projectId)
+        workScheduler.enqueueAnalysis(projectId, _selectedPreset.value)
     }
 
     fun cancelAnalysis() {
-        analysisJob?.cancel()
+        _createdProjectId.value?.let(workScheduler::cancelAnalysis)
         videoEngine.cancel()
     }
 
@@ -204,10 +141,86 @@ class ProjectViewModel @Inject constructor(
     fun getLocalPath(): String? = _localPath.value
 
     override fun onCleared() {
-        analysisJob?.cancel()
+        candidateObservationJob?.cancel()
+        analysisObservationJob?.cancel()
         videoEngine.cancel()
         super.onCleared()
     }
+
+    private fun observeCandidates(projectId: Long) {
+        candidateObservationJob?.cancel()
+        candidateObservationJob = viewModelScope.launch {
+            shortRepository.observeByProject(projectId).collectLatest { entities ->
+                _candidates.value = entities.map(::toCandidateUi)
+            }
+        }
+    }
+
+    private fun observeAnalysis(projectId: Long) {
+        analysisObservationJob?.cancel()
+        analysisObservationJob = viewModelScope.launch {
+            workScheduler.observeAnalysis(projectId).collectLatest { infos ->
+                val info = infos.firstOrNull() ?: return@collectLatest
+                val progress = info.progress.getFloat(WorkKeys.PROGRESS, _project.value?.analysisProgress ?: 0f)
+                _progress.value = progressFromWork(projectId, info, progress)
+                if (info.state == WorkInfo.State.FAILED) {
+                    _error.value = info.outputData.getString(WorkKeys.ERROR) ?: "A análise falhou."
+                } else if (info.state == WorkInfo.State.SUCCEEDED) {
+                    _error.value = null
+                }
+            }
+        }
+    }
+
+    private fun progressFromWork(projectId: Long, info: WorkInfo, totalProgress: Float): PipelineProgress {
+        val stageName = info.progress.getString(WorkKeys.STAGE)
+        val stageIndex = PipelineStage.entries.indexOfFirst { it.name == stageName }
+        val normalizedIndex = stageIndex.coerceAtLeast(0)
+        val stateForCurrent = when (info.state) {
+            WorkInfo.State.FAILED -> StageState.FAILED
+            WorkInfo.State.CANCELLED -> StageState.CANCELLED
+            WorkInfo.State.SUCCEEDED -> StageState.COMPLETED
+            WorkInfo.State.RUNNING -> StageState.PROCESSING
+            else -> StageState.PENDING
+        }
+        val stages = PipelineStage.entries.mapIndexed { index, stage ->
+            when {
+                info.state == WorkInfo.State.SUCCEEDED -> StageProgress(stage, StageState.COMPLETED, 1f)
+                index < normalizedIndex -> StageProgress(stage, StageState.COMPLETED, 1f)
+                index == normalizedIndex -> StageProgress(stage, stateForCurrent, totalProgress)
+                else -> StageProgress(stage, StageState.PENDING)
+            }
+        }
+        return PipelineProgress(projectId, stages)
+    }
+
+    private fun progressFromProject(project: ProjectEntity): PipelineProgress? {
+        if (project.analysisStatus == "idle") return null
+        val state = when (project.analysisStatus) {
+            "done" -> StageState.COMPLETED
+            "failed" -> StageState.FAILED
+            "cancelled" -> StageState.CANCELLED
+            "running" -> StageState.PROCESSING
+            else -> StageState.PENDING
+        }
+        val completed = (project.analysisProgress * PipelineStage.entries.size).toInt()
+        return PipelineProgress(
+            projectId = project.id,
+            stages = PipelineStage.entries.mapIndexed { index, stage ->
+                when {
+                    state == StageState.COMPLETED -> StageProgress(stage, StageState.COMPLETED, 1f)
+                    index < completed -> StageProgress(stage, StageState.COMPLETED, 1f)
+                    index == completed -> StageProgress(stage, state, project.analysisProgress)
+                    else -> StageProgress(stage, StageState.PENDING)
+                }
+            }
+        )
+    }
+
+    private fun initialProgress(projectId: Long = _createdProjectId.value ?: 0L) = PipelineProgress(
+        projectId = projectId,
+        stages = PipelineStage.entries.map { StageProgress(it, StageState.PENDING) }
+    )
 
     private fun updateProgressProjectId(projectId: Long) {
         _progress.value = _progress.value?.copy(projectId = projectId)
@@ -221,22 +234,14 @@ class ProjectViewModel @Inject constructor(
         )
     }
 
-    /** Implementação temporária para manter o fluxo demonstrável até o serviço de transcrição real ser conectado. */
-    private class DemoTranscriptionService(private val videoEngine: VideoEngine) : TranscriptionService {
-        override suspend fun transcribe(audioPath: String): Transcript {
-            val durationMs = videoEngine.probe(audioPath).durationMs
-            if (durationMs <= 0) return Transcript(emptyList())
-            val segments = buildList {
-                var startMs = 0L
-                var index = 1
-                while (startMs < durationMs) {
-                    val endMs = (startMs + 5_000L).coerceAtMost(durationMs)
-                    add(TranscriptSegment(startMs, endMs, "[segmento $index]"))
-                    startMs = endMs
-                    index++
-                }
-            }
-            return Transcript(segments)
-        }
-    }
+    private fun toCandidateUi(entity: ShortEntity) = CandidateUi(
+        id = entity.id,
+        score = entity.score,
+        startMs = entity.startMs,
+        endMs = entity.endMs,
+        title = entity.title,
+        hook = entity.hook,
+        topic = entity.topic,
+        reason = entity.reason
+    )
 }

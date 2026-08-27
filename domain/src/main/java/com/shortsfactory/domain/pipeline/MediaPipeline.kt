@@ -81,14 +81,14 @@ class MediaAnalysisPipeline(
     suspend fun analyze(
         videoPath: String,
         config: GenerationConfig,
-        onStageUpdate: (StageProgress) -> Unit
+        onStageUpdate: suspend (StageProgress) -> Unit
     ): AnalysisOutcome {
         PipelineStage.values().forEach { stage ->
             onStageUpdate(StageProgress(stage, StageState.PENDING))
         }
 
         var currentStage: PipelineStage? = null
-        fun update(stage: PipelineStage, state: StageState, progress: Float = 0f, message: String? = null) {
+        suspend fun update(stage: PipelineStage, state: StageState, progress: Float = 0f, message: String? = null) {
             onStageUpdate(StageProgress(stage, state, progress, message))
         }
 
@@ -224,6 +224,7 @@ interface VideoEngine {
     fun cancel()
     fun probe(path: String): InputVideoInfo
     suspend fun extractAudio(videoPath: String, outputPath: String)
+    suspend fun splitAudio(audioPath: String, outputDir: String, chunkDurationMs: Long): List<String>
     suspend fun processClip(spec: ClipSpec, onProgress: (Float) -> Unit = {})
     suspend fun detectFocusTrack(videoPath: String, startMs: Long, endMs: Long): FocusTrack
     suspend fun extractFrame(videoPath: String, timeMs: Long, outputPath: String)

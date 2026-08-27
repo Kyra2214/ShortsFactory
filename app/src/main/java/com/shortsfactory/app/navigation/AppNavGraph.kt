@@ -92,12 +92,14 @@ fun AppNavGraph(navController: NavHostController = rememberNavController()) {
             val candidates by viewModel.candidates.collectAsState()
             val progress by viewModel.progress.collectAsState()
             val preset by viewModel.selectedPreset.collectAsState()
+            val error by viewModel.error.collectAsState()
             LaunchedEffect(projectId) { viewModel.load(projectId) }
             ProjectScreen(
                 projectId = projectId,
                 candidates = candidates,
                 progress = progress,
                 preset = preset,
+                error = error,
                 onRunAnalysis = { viewModel.runAnalysis() },
                 onChangePreset = { key -> viewModel.changePreset(key) },
                 onCancel = { viewModel.cancelAnalysis() },
@@ -150,10 +152,12 @@ fun AppNavGraph(navController: NavHostController = rememberNavController()) {
             LaunchedEffect(projectId) { viewModel.load(projectId) }
             val shortsCount by viewModel.shortsCount.collectAsState()
             val exportProgress by viewModel.progress.collectAsState()
+            val exportError by viewModel.error.collectAsState()
             ExportScreen(
                 projectId = projectId,
                 shortsCount = shortsCount,
                 progress = exportProgress,
+                error = exportError,
                 onExport = { platforms, quality, resolution, fps ->
                     viewModel.startExport(platforms, quality, resolution, fps)
                 },

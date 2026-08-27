@@ -2,14 +2,19 @@ package com.shortsfactory.viewmodels
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.work.WorkInfo
+import com.shortsfactory.app.work.ShortsWorkScheduler
+import com.shortsfactory.app.work.WorkKeys
 import com.shortsfactory.data.repository.ProjectRepository
 import com.shortsfactory.data.repository.ShortRepository
 import com.shortsfactory.domain.model.BatchExportProgress
 import com.shortsfactory.export.ShortsProcessingManager
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -65,23 +70,26 @@ class EditorViewModel @Inject constructor(
         end: Long
     ) {
         val normalizedStart = start.coerceAtLeast(0L)
-        val normalizedEnd = end.coerceAtLeast(normalizedStart)
+        val normalizedEnd = end.coerceAtLeast(normalizedStart + 1L)
         viewModelScope.launch {
-            shortRepository.updateMetadata(
-                id = shortId,
-                title = title.trim(),
-                description = description.trim(),
-                hashtags = hashtags.trim(),
-                cta = cta.trim(),
-                startMs = normalizedStart,
-                endMs = normalizedEnd
-            )
-            _title.value = title.trim()
-            _description.value = description.trim()
-            _hashtags.value = hashtags.trim()
-            _cta.value = cta.trim()
-            _startMs.value = normalizedStart
-            _endMs.value = normalizedEnd
+            runCatching {
+                shortRepository.updateMetadata(
+                    id = shortId,
+                    title = title.trim(),
+                    description = description.trim(),
+                    hashtags = hashtags.trim(),
+                    cta = cta.trim(),
+                    startMs = normalizedStart,
+                    endMs = normalizedEnd
+                )
+            }.onSuccess {
+                _title.value = title.trim()
+                _description.value = description.trim()
+                _hashtags.value = hashtags.trim()
+                _cta.value = cta.trim()
+                _startMs.value = normalizedStart
+                _endMs.value = normalizedEnd
+            }
         }
     }
 
@@ -91,13 +99,14 @@ class EditorViewModel @Inject constructor(
 @HiltViewModel
 class ExportViewModel @Inject constructor(
     private val shortRepository: ShortRepository,
-    private val processingManager: ShortsProcessingManager
+    private val workScheduler: ShortsWorkScheduler
 ) : ViewModel() {
 
     private val _shortsCount = MutableStateFlow(0)
     private val _progress = MutableStateFlow<BatchExportProgress?>(null)
     private val _error = MutableStateFlow<String?>(null)
     private var projectId: Long = 0L
+    private var exportObservationJob: Job? = null
 
     val shortsCount: StateFlow<Int> = _shortsCount.asStateFlow()
     val progress: StateFlow<BatchExportProgress?> = _progress.asStateFlow()
@@ -107,29 +116,45 @@ class ExportViewModel @Inject constructor(
         projectId = id
         viewModelScope.launch {
             _shortsCount.value = shortRepository.getByProject(id).size
+            exportObservationJob?.cancel()
+            exportObservationJob = launch {
+                workScheduler.observeExport(id).collectLatest { infos ->
+                    val info = infos.firstOrNull() ?: return@collectLatest
+                    updateProgress(info)
+                    if (info.state == WorkInfo.State.FAILED) {
+                        _error.value = info.outputData.getString(WorkKeys.ERROR) ?: "Falha ao exportar os Shorts."
+                    } else if (info.state == WorkInfo.State.SUCCEEDED) {
+                        _error.value = null
+                    }
+                }
+            }
         }
     }
 
     fun startExport(platforms: List<String>, quality: String, resolution: String, fps: Int) {
         if (_progress.value?.isRunning == true) return
         _error.value = null
-        viewModelScope.launch {
-            runCatching {
-                processingManager.exportBatch(
-                    projectId = projectId,
-                    platforms = platforms,
-                    quality = quality,
-                    resolution = resolution,
-                    fps = fps,
-                    onProgress = { _progress.value = it }
-                )
-            }.onFailure { throwable ->
-                _error.value = throwable.message ?: "Falha ao exportar os Shorts."
-            }
-        }
+        workScheduler.enqueueExport(projectId, platforms, quality, resolution, fps)
     }
 
     fun cancel() {
-        processingManager.cancel()
+        workScheduler.cancelExport(projectId)
+    }
+
+    override fun onCleared() {
+        exportObservationJob?.cancel()
+        super.onCleared()
+    }
+
+    private fun updateProgress(info: WorkInfo) {
+        val total = info.progress.getInt(WorkKeys.TOTAL, _shortsCount.value)
+        val current = info.progress.getInt(WorkKeys.CURRENT, if (info.state == WorkInfo.State.SUCCEEDED) total else 0)
+        val currentProgress = info.progress.getFloat(WorkKeys.PROGRESS, 0f)
+        _progress.value = BatchExportProgress(
+            total = total,
+            current = current.coerceIn(0, total.coerceAtLeast(0)),
+            currentProgress = currentProgress.coerceIn(0f, 1f),
+            isRunning = info.state == WorkInfo.State.RUNNING || info.state == WorkInfo.State.ENQUEUED
+        )
     }
 }

@@ -14,8 +14,8 @@ import com.shortsfactory.data.local.entity.SubtitleEntity
 import com.shortsfactory.data.local.entity.TranscriptEntity
 import com.shortsfactory.domain.model.AIAnalysisResult
 import com.shortsfactory.domain.model.ShortCandidate
-import com.shortsfactory.domain.model.Transcript
 import com.shortsfactory.domain.model.SubtitleSegment
+import com.shortsfactory.domain.model.Transcript
 import com.shortsfactory.domain.model.TranscriptCodec
 import kotlinx.coroutines.flow.Flow
 import kotlinx.serialization.Serializable
@@ -31,6 +31,15 @@ class ProjectRepository(private val dao: ProjectDao) {
     suspend fun getById(id: Long): ProjectEntity? = dao.getById(id)
     fun observeAll(): Flow<List<ProjectEntity>> = dao.observeAll()
     suspend fun delete(id: Long) = dao.delete(id)
+
+    suspend fun updateAnalysisState(
+        id: Long,
+        status: String,
+        progress: Float,
+        error: String? = null
+    ) {
+        dao.updateAnalysisState(id, status, progress.coerceIn(0f, 1f), error, now())
+    }
 }
 
 class ShortRepository(private val dao: ShortDao) {
@@ -53,7 +62,8 @@ class ShortRepository(private val dao: ShortDao) {
                     description = "",
                     hashtags = "",
                     cta = "",
-                    status = "pending"
+                    status = "pending",
+                    updatedAtMs = now()
                 )
             )
         }
@@ -68,19 +78,39 @@ class ShortRepository(private val dao: ShortDao) {
         startMs: Long,
         endMs: Long
     ) {
+        require(endMs > startMs) { "O fim do Short precisa ser maior que o início." }
         dao.updateMetadata(
             id = id,
-            title = title,
-            description = description,
-            hashtags = hashtags,
-            cta = cta,
+            title = title.trim(),
+            description = description.trim(),
+            hashtags = hashtags.trim(),
+            cta = cta.trim(),
             startMs = startMs,
-            endMs = endMs
+            endMs = endMs,
+            updatedAtMs = now()
         )
     }
 
     suspend fun updateExportState(id: Long, localPath: String?, status: String) {
-        dao.updateExportState(id, localPath, status)
+        dao.updateExportState(
+            id = id,
+            status = status,
+            progress = if (status == "done") 1f else 0f,
+            error = null,
+            localPath = localPath,
+            updatedAtMs = now()
+        )
+    }
+
+    suspend fun updateExportProgress(id: Long, status: String, progress: Float, error: String? = null) {
+        dao.updateExportState(
+            id = id,
+            status = status,
+            progress = progress,
+            error = error,
+            localPath = null,
+            updatedAtMs = now()
+        )
     }
 }
 
@@ -151,7 +181,80 @@ class SubtitleRepository(private val dao: SubtitleDao) {
 
 class ExportRepository(private val dao: ExportDao) {
     fun observeByProject(projectId: Long): Flow<List<ExportEntity>> = dao.observeByProject(projectId)
+    suspend fun getById(id: Long): ExportEntity? = dao.getById(id)
+    suspend fun getLatestForShort(
+        projectId: Long,
+        shortId: Long,
+        platform: String,
+        quality: String,
+        resolution: String,
+        fps: Int
+    ): ExportEntity? = dao.getLatestForShort(projectId, shortId, platform, quality, resolution, fps)
+    suspend fun getResumableByProject(projectId: Long): List<ExportEntity> = dao.getResumableByProject(projectId)
     suspend fun insert(entity: ExportEntity): Long = dao.insert(entity)
-    suspend fun updateResult(id: Long, outputPath: String?, status: String) =
-        dao.updateResult(id, outputPath, status)
+
+    suspend fun markQueued(id: Long) = update(id, status = "queued", progress = 0f, errorMessage = null, replaceError = true)
+
+    suspend fun markRunning(id: Long): ExportEntity? {
+        val current = dao.getById(id) ?: return null
+        update(
+            id = id,
+            status = "running",
+            progress = current.progress,
+            attemptCount = current.attemptCount + 1,
+            startedAtMs = current.startedAtMs ?: now(),
+            errorMessage = null,
+            replaceError = true
+        )
+        return dao.getById(id)
+    }
+
+    suspend fun updateProgress(id: Long, progress: Float) =
+        update(id, status = "running", progress = progress)
+
+    suspend fun markDone(id: Long, outputPath: String) =
+        update(id, status = "done", progress = 1f, outputPath = outputPath, errorMessage = null, replaceError = true, completedAtMs = now())
+
+    suspend fun markFailed(id: Long, message: String) =
+        update(id, status = "failed", errorMessage = message, replaceError = true, completedAtMs = now())
+
+    suspend fun markCancelled(id: Long, message: String = "Exportação cancelada.") =
+        update(id, status = "cancelled", errorMessage = message, replaceError = true, completedAtMs = now())
+
+    /** Compatibilidade para chamadas legadas do manager de exportação. */
+    suspend fun updateResult(id: Long, outputPath: String?, status: String) {
+        when (status) {
+            "done" -> if (outputPath != null) markDone(id, outputPath) else update(id, status = status, progress = 1f)
+            "cancelled" -> markCancelled(id)
+            "failed" -> markFailed(id, "A exportação falhou.")
+            else -> update(id, status = status, outputPath = outputPath)
+        }
+    }
+
+    private suspend fun update(
+        id: Long,
+        status: String,
+        progress: Float? = null,
+        attemptCount: Int? = null,
+        errorMessage: String? = null,
+        replaceError: Boolean = false,
+        startedAtMs: Long? = null,
+        completedAtMs: Long? = null,
+        outputPath: String? = null
+    ) {
+        val current = dao.getById(id) ?: return
+        dao.updateState(
+            id = id,
+            status = status,
+            progress = (progress ?: current.progress).coerceIn(0f, 1f),
+            attemptCount = attemptCount ?: current.attemptCount,
+            errorMessage = errorMessage,
+            replaceError = replaceError,
+            startedAtMs = startedAtMs,
+            completedAtMs = completedAtMs,
+            outputPath = outputPath
+        )
+    }
 }
+
+private fun now(): Long = System.currentTimeMillis()

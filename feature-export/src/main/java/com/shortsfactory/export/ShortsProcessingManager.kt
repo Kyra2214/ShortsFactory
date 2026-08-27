@@ -46,6 +46,7 @@ class ShortsProcessingManager @Inject constructor(
 
         val platformKeys = platforms.filter { key -> ExportPlatform.entries.any { it.key == key } }
             .ifEmpty { listOf("shorts") }
+        val platformKey = platformKeys.joinToString(",")
         val selectedQuality = ExportQuality.entries.firstOrNull {
             it.label == quality || it.name.equals(quality, ignoreCase = true)
         } ?: ExportQuality.Normal
@@ -55,9 +56,12 @@ class ShortsProcessingManager @Inject constructor(
         val targetWidth = selectedResolution.width.takeIf { it > 0 } ?: 1080
         val targetHeight = selectedResolution.height.takeIf { it > 0 } ?: 1920
         val outputDir = File(application.filesDir, "exports").apply { mkdirs() }
+        check(outputDir.usableSpace >= MIN_FREE_SPACE_BYTES) {
+            "Não há espaço livre suficiente para exportar os Shorts."
+        }
+
         val total = candidates.size
         var completed = 0
-
         onProgress(BatchExportProgress(total, 0, 0f, isRunning = true))
 
         for ((index, candidate) in candidates.withIndex()) {
@@ -68,7 +72,7 @@ class ShortsProcessingManager @Inject constructor(
                 candidate.endMs > candidate.startMs &&
                 (project.videoDurationMs <= 0L || candidate.endMs <= project.videoDurationMs)
             if (!validInterval) {
-                shortRepository.updateExportState(candidate.id, null, "failed")
+                shortRepository.updateExportProgress(candidate.id, "failed", 0f, "Intervalo de vídeo inválido.")
                 completed++
                 onProgress(BatchExportProgress(total, completed, 0f, isRunning = true))
                 continue
@@ -78,22 +82,44 @@ class ShortsProcessingManager @Inject constructor(
                 .replace(Regex("[^A-Za-z0-9 _-]"), "")
                 .trim()
                 .ifEmpty { "short_${index + 1}" }
-            val outputPath = File(outputDir, "${safeTitle}_${index + 1}.mp4").absolutePath
-            val exportId = exportRepository.insert(
+            val outputFile = File(outputDir, "${safeTitle}_${index + 1}.mp4")
+            val outputPath = outputFile.absolutePath
+            val existing = exportRepository.getLatestForShort(
+                projectId = projectId,
+                shortId = candidate.id,
+                platform = platformKey,
+                quality = selectedQuality.name,
+                resolution = selectedResolution.label,
+                fps = safeFps
+            )
+            if (existing?.status == "done" && outputFile.isFile && outputFile.length() > 0L) {
+                shortRepository.updateExportState(candidate.id, outputPath, "done")
+                completed++
+                onProgress(BatchExportProgress(total, completed, 1f, isRunning = true))
+                continue
+            }
+
+            val exportId = existing?.id ?: exportRepository.insert(
                 ExportEntity(
                     projectId = projectId,
-                    platform = platformKeys.joinToString(","),
+                    shortId = candidate.id,
+                    platform = platformKey,
                     quality = selectedQuality.name,
                     resolution = selectedResolution.label,
                     fps = safeFps,
-                    status = "running"
+                    status = "queued"
                 )
             )
-            shortRepository.updateExportState(candidate.id, null, "processing")
+            exportRepository.markQueued(exportId)
+            exportRepository.markRunning(exportId)
+            shortRepository.updateExportProgress(candidate.id, "processing", 0f)
 
             try {
                 val subtitles = subtitleRepository.getSegments(candidate.id)
                 val style = resolveSubtitleStyle("creator")
+                val focusTrack = runCatching {
+                    videoEngine.detectFocusTrack(project.videoUri, candidate.startMs, candidate.endMs)
+                }.getOrNull()
                 videoEngine.processClip(
                     ClipSpec(
                         inputPath = project.videoUri,
@@ -104,23 +130,29 @@ class ShortsProcessingManager @Inject constructor(
                         targetHeight = targetHeight,
                         fps = safeFps,
                         bitrateBps = selectedQuality.videoBitrateBps,
-                        focusTrack = null,
+                        focusTrack = focusTrack,
                         subtitles = subtitles,
                         subtitleStyle = style
                     )
                 ) { progress ->
                     onProgress(BatchExportProgress(total, completed, progress.coerceIn(0f, 1f), isRunning = true))
                 }
-                exportRepository.updateResult(exportId, outputPath, "done")
+                check(outputFile.isFile && outputFile.length() > 0L) {
+                    "O FFmpeg não gerou um arquivo de saída válido."
+                }
+                exportRepository.markDone(exportId, outputPath)
                 shortRepository.updateExportState(candidate.id, outputPath, "done")
             } catch (ce: CancellationException) {
-                exportRepository.updateResult(exportId, null, "cancelled")
-                shortRepository.updateExportState(candidate.id, null, "failed")
+                exportRepository.markCancelled(exportId)
+                shortRepository.updateExportProgress(candidate.id, "cancelled", 0f, "Exportação cancelada.")
+                outputFile.delete()
                 throw ce
             } catch (e: Exception) {
                 val status = if (cancelled) "cancelled" else "failed"
-                exportRepository.updateResult(exportId, null, status)
-                shortRepository.updateExportState(candidate.id, null, "failed")
+                if (status == "cancelled") exportRepository.markCancelled(exportId)
+                else exportRepository.markFailed(exportId, e.message ?: "Falha ao gerar o arquivo.")
+                shortRepository.updateExportProgress(candidate.id, status, 0f, e.message)
+                outputFile.delete()
                 Log.w(TAG, "Falha ao exportar ${candidate.title}", e)
                 if (cancelled) break
             } finally {
@@ -160,5 +192,6 @@ class ShortsProcessingManager @Inject constructor(
 
     companion object {
         private const val TAG = "ShortsProcessingManager"
+        private const val MIN_FREE_SPACE_BYTES = 100L * 1024L * 1024L
     }
 }

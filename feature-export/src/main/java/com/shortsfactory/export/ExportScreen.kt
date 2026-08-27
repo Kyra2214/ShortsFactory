@@ -43,6 +43,7 @@ fun ExportScreen(
     projectId: Long,
     shortsCount: Int,
     progress: com.shortsfactory.domain.model.BatchExportProgress?,
+    error: String? = null,
     onExport: (platforms: List<String>, quality: String, resolution: String, fps: Int) -> Unit,
     onCancel: () -> Unit,
     onBack: () -> Unit
@@ -78,6 +79,21 @@ fun ExportScreen(
                 text = "$shortsCount Shorts serão exportados em lote.",
                 style = MaterialTheme.typography.bodyMedium
             )
+            error?.let { message ->
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                    colors = androidx.compose.material3.CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer
+                    )
+                ) {
+                    Text(
+                        text = message,
+                        modifier = Modifier.padding(12.dp),
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
 
             Spacer(Modifier.height(16.dp))
             Text("Plataformas de destino", style = MaterialTheme.typography.titleSmall)
@@ -155,9 +171,14 @@ fun ExportScreen(
             } else {
                 Button(
                     onClick = { onExport(platforms.toList(), quality, resolution, fps) },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = shortsCount > 0
                 ) {
-                    Text("Iniciar exportação em lote")
+                    Text(if (progress != null && progress.current == progress.total && progress.total > 0) {
+                        "Exportação concluída — exportar novamente"
+                    } else {
+                        "Iniciar exportação em lote"
+                    })
                 }
             }
 

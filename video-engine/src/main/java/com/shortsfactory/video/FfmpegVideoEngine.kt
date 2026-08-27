@@ -10,6 +10,12 @@ import com.shortsfactory.domain.model.SubtitleSegment
 import com.shortsfactory.domain.model.SubtitleStyleConfig
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.face.FaceDetection
+import com.google.mlkit.vision.face.FaceDetector
+import com.google.mlkit.vision.face.FaceDetectorOptions
 import com.shortsfactory.core.AssetExtractor
 
 import android.util.Log
@@ -19,6 +25,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -26,7 +33,6 @@ import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
-import kotlin.coroutines.suspendCoroutine
 
 /**
  * Implementação do VideoEngine usando o binário FFmpeg embutido no APK
@@ -41,6 +47,14 @@ class FfmpegVideoEngine constructor(private val appContext: Context) : VideoEngi
 
     @Volatile private var runningProcess: Process? = null
     private val mutex = Mutex()
+    private val faceDetector: FaceDetector by lazy {
+        FaceDetection.getClient(
+            FaceDetectorOptions.Builder()
+                .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
+                .enableTracking()
+                .build()
+        )
+    }
 
     override fun cancel() {
         runningProcess?.destroy()
@@ -59,6 +73,30 @@ class FfmpegVideoEngine constructor(private val appContext: Context) : VideoEngi
             outputPath
         )
         run(args)
+    }
+
+    override suspend fun splitAudio(audioPath: String, outputDir: String, chunkDurationMs: Long): List<String> {
+        require(chunkDurationMs > 0L) { "A duração do fragmento de áudio deve ser positiva." }
+        val dir = File(outputDir).apply { mkdirs() }
+        dir.listFiles { file -> file.getName().startsWith("audio_chunk_") }?.forEach(File::delete)
+        val pattern = File(dir, "audio_chunk_%03d.mp3").absolutePath
+        run(
+            listOf(
+                "-y", "-loglevel", "warning",
+                "-i", audioPath,
+                "-f", "segment",
+                "-segment_time", (chunkDurationMs / 1_000.0).toString(),
+                "-reset_timestamps", "1",
+                "-acodec", "libmp3lame", "-q:a", "4",
+                pattern
+            )
+        )
+        return dir.listFiles { file ->
+            file.getName().startsWith("audio_chunk_") && file.getName().endsWith(".mp3")
+        }
+            ?.sortedBy { it.getName() }
+            ?.map { it.getAbsolutePath() }
+            .orEmpty()
     }
 
     override suspend fun processClip(spec: ClipSpec, onProgress: (Float) -> Unit) {
@@ -120,7 +158,7 @@ class FfmpegVideoEngine constructor(private val appContext: Context) : VideoEngi
                     ),
                     timeoutMs = 20_000L
                 )
-                val center = analyzeFrameCenter(frameFile) ?: default
+                val center = analyzeFrameCenter(frameFile, timeMs) ?: default.copy(timeMs = timeMs)
                 points += center
             } catch (e: Exception) {
                 Log.w(TAG, "Falha ao amostrar frame em ${timeMs}ms, usando centro", e)
@@ -130,9 +168,14 @@ class FfmpegVideoEngine constructor(private val appContext: Context) : VideoEngi
             }
             timeMs += stepMs
         }
+        val finalPoints = smoothFocusPoints(points.ifEmpty { listOf(default) })
         return FocusTrack(
-            points.ifEmpty { listOf(default) },
-            TrackingMethod.STATIC_CENTER
+            finalPoints,
+            if (finalPoints.any { it.centerX != 0.5f || it.centerY != 0.42f }) {
+                TrackingMethod.FACE_TRACKING
+            } else {
+                TrackingMethod.STATIC_CENTER
+            }
         )
     }
 
@@ -243,14 +286,57 @@ class FfmpegVideoEngine constructor(private val appContext: Context) : VideoEngi
         return drawtexts.joinToString(",")
     }
 
-    private fun analyzeFrameCenter(frameFile: File): FocusPoint? {
-        // Heurística simples (placeholder). Em produção, integrar ML Kit
-        // Face Detection para tracking real de rostos.
-        if (!frameFile.exists()) return null
-        return FocusPoint(
-            timeMs = 0, centerX = 0.5f, centerY = 0.42f, width = 0.6f, height = 0.7f
-        )
+    private fun smoothFocusPoints(points: List<FocusPoint>): List<FocusPoint> {
+        if (points.size < 2) return points
+        val smoothed = mutableListOf(points.first())
+        for (point in points.drop(1)) {
+            val previous = smoothed.last()
+            val alpha = 0.65f
+            smoothed += point.copy(
+                centerX = (previous.centerX * (1f - alpha) + point.centerX * alpha).coerceIn(0f, 1f),
+                centerY = (previous.centerY * (1f - alpha) + point.centerY * alpha).coerceIn(0f, 1f),
+                width = (previous.width * (1f - alpha) + point.width * alpha).coerceIn(0f, 1f),
+                height = (previous.height * (1f - alpha) + point.height * alpha).coerceIn(0f, 1f)
+            )
+        }
+        return smoothed
     }
+
+    private suspend fun analyzeFrameCenter(frameFile: File, timeMs: Long): FocusPoint? =
+        suspendCancellableCoroutine { continuation ->
+            if (!frameFile.exists()) {
+                continuation.resume(null)
+                return@suspendCancellableCoroutine
+            }
+            val bitmap = BitmapFactory.decodeFile(frameFile.absolutePath)
+            if (bitmap == null || bitmap.width <= 0 || bitmap.height <= 0) {
+                bitmap?.recycle()
+                continuation.resume(null)
+                return@suspendCancellableCoroutine
+            }
+
+            val image = InputImage.fromBitmap(bitmap, 0)
+            faceDetector.process(image)
+                .addOnSuccessListener { faces ->
+                    val face = faces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }
+                    val result = face?.let {
+                        val bounds = it.boundingBox
+                        FocusPoint(
+                            timeMs = timeMs,
+                            centerX = (bounds.exactCenterX() / bitmap.width.toFloat()).coerceIn(0f, 1f),
+                            centerY = (bounds.exactCenterY() / bitmap.height.toFloat()).coerceIn(0f, 1f),
+                            width = (bounds.width() / bitmap.width.toFloat()).coerceIn(0f, 1f),
+                            height = (bounds.height() / bitmap.height.toFloat()).coerceIn(0f, 1f)
+                        )
+                    }
+                    bitmap.recycle()
+                    if (continuation.isActive) continuation.resume(result)
+                }
+                .addOnFailureListener { error ->
+                    bitmap.recycle()
+                    if (continuation.isActive) continuation.resumeWithException(error)
+                }
+        }
 
     private fun ffmpegPath(): String {
         // Binário embutido no APK (jniLibs/arm64-v8a/ffmpeg).
@@ -272,55 +358,68 @@ class FfmpegVideoEngine constructor(private val appContext: Context) : VideoEngi
         onProgress: (Float) -> Unit = {},
         timeoutMs: Long = TIMEOUT_MS,
         progressDurationMs: Long? = null
-    ) =
-        suspendCoroutine { cont ->
-            CoroutineScope(Dispatchers.IO).launch {
-                try {
-                    mutex.withLock {
-                        val cmd = (listOf(ffmpegPath()) + args).toTypedArray()
-                        val process = ProcessBuilder(*cmd)
-                            .directory(workDir)
-                            .redirectErrorStream(true)
-                            .start()
-                        runningProcess = process
-                        val reader = async {
-                            var lastProgress = 0f
-                            process.inputStream.bufferedReader().useLines { lines ->
-                                for (line in lines) {
-                                    val t = REGEX_TIME.find(line)?.groupValues?.get(1)
-                                    if (t != null) {
-                                        val secs = parseHms(t)
-                                        val durationSeconds = progressDurationMs?.div(1000.0)
-                                        val p = if (durationSeconds != null && durationSeconds > 0.0) {
-                                            (secs / durationSeconds).toFloat()
-                                        } else {
-                                            0f
-                                        }.coerceIn(0f, 1f)
-                                        onProgress(p)
-                                        lastProgress = p
-                                    }
-                                    Log.d(TAG, line.take(200))
+    ) = suspendCancellableCoroutine { cont ->
+        var process: Process? = null
+        val job = CoroutineScope(Dispatchers.IO).launch {
+            try {
+                mutex.withLock {
+                    val cmd = (listOf(ffmpegPath()) + args).toTypedArray()
+                    process = ProcessBuilder(*cmd)
+                        .directory(workDir)
+                        .redirectErrorStream(true)
+                        .start()
+                    runningProcess = process
+                    val activeProcess = process ?: error("FFmpeg não foi iniciado.")
+                    val reader = async {
+                        activeProcess.inputStream.bufferedReader().useLines { lines ->
+                            for (line in lines) {
+                                val t = REGEX_TIME.find(line)?.groupValues?.get(1)
+                                if (t != null) {
+                                    val secs = parseHms(t)
+                                    val durationSeconds = progressDurationMs?.div(1000.0)
+                                    val p = if (durationSeconds != null && durationSeconds > 0.0) {
+                                        (secs / durationSeconds).toFloat()
+                                    } else {
+                                        0f
+                                    }.coerceIn(0f, 1f)
+                                    onProgress(p)
                                 }
+                                Log.d(TAG, line.take(200))
                             }
-                            lastProgress
                         }
-                        val finished = withTimeoutOrNull(timeoutMs) { process.waitFor() }
-                        val output = reader.await()
-                        runningProcess = null
-                        val exit = finished ?: run {
-                            process.destroyForcibly()
-                            -1
-                        }
-                        if (exit == 0) cont.resume(Unit)
-                        else cont.resumeWithException(RuntimeException("FFmpeg falhou (exit $exit). Veja os logs do engine."))
                     }
-                } catch (ce: CancellationException) {
-                    throw ce
-                } catch (e: Exception) {
-                    cont.resumeWithException(e)
+                    val waitJob = async(Dispatchers.IO) { activeProcess.waitFor() }
+                    val finished = withTimeoutOrNull(timeoutMs) { waitJob.await() }
+                    val exit = finished ?: run {
+                        activeProcess.destroyForcibly()
+                        waitJob.join()
+                        -1
+                    }
+                    reader.await()
+                    if (exit == 0) {
+                        if (cont.isActive) cont.resume(Unit)
+                    } else if (cont.isActive) {
+                        cont.resumeWithException(
+                            RuntimeException("FFmpeg falhou (exit $exit). Veja os logs do engine.")
+                        )
+                    }
                 }
+            } catch (ce: CancellationException) {
+                process?.destroy()
+                process?.destroyForcibly()
+                throw ce
+            } catch (e: Exception) {
+                if (cont.isActive) cont.resumeWithException(e)
+            } finally {
+                if (runningProcess === process) runningProcess = null
             }
         }
+        cont.invokeOnCancellation {
+            process?.destroy()
+            process?.destroyForcibly()
+            job.cancel()
+        }
+    }
 
     private suspend fun runFfprobe(path: String): String = withContext(Dispatchers.IO) {
         val process = ProcessBuilder(

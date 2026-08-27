@@ -15,6 +15,10 @@ data class ProjectEntity(
     val videoSizeBytes: Long,
     val sourceType: String,
     val sourceUrl: String? = null,
+    val analysisStatus: String = "idle", // idle | queued | running | done | failed | cancelled
+    val analysisProgress: Float = 0f,
+    val analysisError: String? = null,
+    val updatedAtMs: Long = System.currentTimeMillis(),
     val createdAtMs: Long = System.currentTimeMillis()
 )
 
@@ -34,7 +38,10 @@ data class ShortEntity(
     val hashtags: String = "",
     val cta: String = "",
     val localPath: String? = null,
-    val status: String = "pending", // pending | processing | done | failed
+    val status: String = "pending", // pending | queued | processing | done | failed | cancelled
+    val exportProgress: Float = 0f,
+    val exportError: String? = null,
+    val updatedAtMs: Long = System.currentTimeMillis(),
     val createdAtMs: Long = System.currentTimeMillis()
 )
 
@@ -67,11 +74,17 @@ data class SubtitleEntity(
 data class ExportEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val projectId: Long,
+    val shortId: Long? = null,
     val platform: String,
     val quality: String,
     val resolution: String,
     val fps: Int,
     val outputPath: String? = null,
-    val status: String = "pending", // pending | running | done | failed
+    val status: String = "pending", // pending | queued | running | done | failed | cancelled
+    val progress: Float = 0f,
+    val attemptCount: Int = 0,
+    val errorMessage: String? = null,
+    val startedAtMs: Long? = null,
+    val completedAtMs: Long? = null,
     val createdAtMs: Long = System.currentTimeMillis()
 )

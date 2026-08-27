@@ -97,6 +97,7 @@ fun ProjectScreen(
     candidates: List<CandidateUi>,
     progress: PipelineProgress?,
     preset: String,
+    error: String? = null,
     onRunAnalysis: () -> Unit,
     onChangePreset: (key: String) -> Unit,
     onCancel: () -> Unit,
@@ -123,9 +124,25 @@ fun ProjectScreen(
                 .padding(16.dp)
                 .verticalScroll(rememberScrollState())
         ) {
-            if (progress != null && !progress.isFinished) {
+            val isRunning = progress?.stages?.any { it.state == StageState.PROCESSING } == true
+            if (progress != null && (!progress.isFinished || error != null)) {
                 PipelineStatusCard(progress)
                 Spacer(Modifier.height(12.dp))
+            }
+            error?.let { message ->
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                    colors = androidx.compose.material3.CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer
+                    )
+                ) {
+                    Text(
+                        text = message,
+                        modifier = Modifier.padding(16.dp),
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
             }
 
             Text("Duração alvo do Short", style = MaterialTheme.typography.titleSmall)
@@ -151,9 +168,18 @@ fun ProjectScreen(
             Spacer(Modifier.height(12.dp))
             Button(
                 onClick = onRunAnalysis,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !isRunning
             ) {
-                Text("Analisar vídeo com IA")
+                Text(if (isRunning) "Análise em andamento..." else "Analisar vídeo com IA")
+            }
+            if (isRunning) {
+                OutlinedButton(
+                    onClick = onCancel,
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                ) {
+                    Text("Cancelar análise")
+                }
             }
 
             Spacer(Modifier.height(16.dp))
@@ -179,7 +205,15 @@ fun ProjectScreen(
 fun PipelineStatusCard(progress: PipelineProgress) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Text("Processando...", style = MaterialTheme.typography.titleSmall)
+            val aggregateProgress = progress.stages.map { it.progress }.average().toFloat().coerceIn(0f, 1f)
+            Text(
+                if (progress.isFinished) "Análise finalizada" else "Processando...",
+                style = MaterialTheme.typography.titleSmall
+            )
+            LinearProgressIndicator(
+                progress = { aggregateProgress },
+                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
+            )
             progress.stages.forEach { stage ->
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 4.dp)) {
                     when (stage.state) {

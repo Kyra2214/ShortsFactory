@@ -8,6 +8,8 @@ import com.shortsfactory.video.FfmpegVideoEngine
 import com.shortsfactory.data.local.dao.*
 import com.shortsfactory.data.local.db.ShortsDatabase
 import com.shortsfactory.data.repository.*
+import com.shortsfactory.data.transcription.OpenAiTranscriptionService
+import com.shortsfactory.domain.pipeline.TranscriptionService
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -27,7 +29,10 @@ object DataModule {
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): ShortsDatabase =
         Room.databaseBuilder(context, ShortsDatabase::class.java, "shorts_factory.db")
-            .addMigrations(ShortsDatabase.MIGRATION_1_2)
+            .addMigrations(
+                ShortsDatabase.MIGRATION_1_2,
+                ShortsDatabase.MIGRATION_2_3
+            )
             .build()
 
     @Provides fun projectDao(db: ShortsDatabase): ProjectDao = db.projectDao()
@@ -52,4 +57,10 @@ object DataModule {
 
     @Provides @Singleton
     fun videoEngine(@ApplicationContext context: Context): VideoEngine = FfmpegVideoEngine(context)
+
+    @Provides @Singleton
+    fun transcriptionService(
+        secureKeyStore: SecureKeyStore,
+        videoEngine: VideoEngine
+    ): TranscriptionService = OpenAiTranscriptionService(secureKeyStore, videoEngine)
 }

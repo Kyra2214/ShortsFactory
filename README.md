@@ -1,49 +1,91 @@
 # ShortsFactory
 
-ShortsFactory é um aplicativo Android modular para transformar vídeos longos em candidatos a Shorts, com análise de transcrição por IA, edição de metadata, tendências e exportação vertical com FFmpeg local. O processamento de mídia ocorre no dispositivo; a integração com o provedor Grok só é acionada quando o usuário configura uma chave na tela de configurações.
+ShortsFactory é um aplicativo Android modular em Kotlin e Jetpack Compose para transformar vídeos longos em candidatos a Shorts. A análise, o tracking facial, a geração de legendas e a exportação vertical são executados localmente sempre que possível; integrações externas ficam limitadas aos provedores de IA explicitamente configurados pelo usuário.
 
 ## Estado atual
 
-O repositório contém a primeira rodada de saneamento técnico aplicada ao projeto enviado. O fluxo de ViewModels usa Hilt, a navegação observa estados assíncronos corretamente, a persistência de metadata foi separada dos campos originais da análise, a migração Room é não destrutiva e transcript/resultado de análise usam JSON estruturado.
+A base atual está estruturada para uma evolução próxima de produção. O app usa Hilt para composição de dependências, Room para persistência, WorkManager para tarefas longas e uma separação explícita entre domínio, dados, engine de vídeo e features de UI. Projetos, candidatos, estados de análise e exportações sobrevivem ao encerramento da Activity e podem ser reidratados ao abrir o projeto novamente.
 
-A transcrição ainda é uma implementação demonstrativa que gera segmentos marcadores. Ela está isolada atrás de `TranscriptionService` para que um serviço real possa ser conectado posteriormente sem alterar a pipeline de análise.
+A análise é agendada como trabalho único por projeto. Seu estado persistente pode ser `idle`, `queued`, `running`, `done`, `failed` ou `cancelled`, com progresso, mensagem de erro, timestamp de atualização e retry controlado. A exportação mantém estado por item, progresso, tentativas, arquivo de saída e timestamps; o arquivo parcial é removido quando uma execução falha ou é cancelada.
 
 ## Arquitetura
 
 | Módulo | Responsabilidade |
 | --- | --- |
-| `app` | Activity, composição Hilt e navegação Compose |
-| `core` | Armazenamento seguro da chave e extração dos binários de mídia |
-| `domain` | Modelos, contratos e pipeline independente de Android |
-| `data` | Room, DAOs, repositórios e importação de vídeos |
-| `video-engine` | Execução local de FFmpeg/ffprobe e processamento de clipes |
-| `feature-*` | Telas e componentes das áreas de projetos, editor, exportação, IA, configurações e tendências |
+| `app` | Activity, composição Hilt, workers do WorkManager e navegação Compose |
+| `core` | Armazenamento seguro das chaves e extração dos binários de mídia |
+| `domain` | Modelos, contratos, validação de mídia e pipeline independente de Android |
+| `data` | Room versão 3, migrações, DAOs, repositórios, importação e transcrição |
+| `video-engine` | FFmpeg/ffprobe local, extração/divisão de áudio, filtros e tracking facial |
+| `feature-projects` | Lista de projetos, análise, estados, progresso e cancelamento |
+| `feature-editor` | Edição de intervalos e metadata dos candidatos |
+| `feature-export` | Fila de exportação, progresso e estados por plataforma |
+| `feature-ai` | Configuração do provedor Grok e da chave OpenAI de transcrição |
+| `feature-settings` e `feature-trends` | Preferências e tendências da aplicação |
 
-## Requisitos
+A ordem de dependências evita ciclos: `app` compõe os módulos, `data` depende de `domain`, `core` e `video-engine`, e as features dependem somente dos contratos e serviços necessários para suas responsabilidades.
 
-Para compilar localmente, use JDK 17, Android SDK com a plataforma 35 e Gradle Wrapper. O app suporta Android API 26 ou superior. Os binários `ffmpeg` e `ffprobe` necessários para o processamento local permanecem em `app/src/main/assets`.
+## Transcrição real opcional
 
-Crie `local.properties` apontando para o SDK local, por exemplo `sdk.dir=/caminho/para/Android/Sdk`, e não versione esse arquivo. A chave do provedor de IA deve ser configurada dentro do app e nunca adicionada ao código, ao histórico Git ou a arquivos de configuração commitados.
+A transcrição real é implementada por `OpenAiTranscriptionService`, injetado pelo contrato `TranscriptionService`. O adapter chama o endpoint oficial `/v1/audio/transcriptions` com o modelo `whisper-1`, resposta `verbose_json` e granularidade de timestamps por segmento. A chave é guardada no `EncryptedSharedPreferences` através de `SecureKeyStore`; ela não é persistida em código, logs, `local.properties`, artefatos ou histórico Git.
 
-## Validação
+Para habilitar a integração, abra a tela de configurações de IA, informe a chave OpenAI e salve-a. Sem uma chave configurada, o app não realiza chamada externa e a análise falha com uma mensagem orientando a configuração. O áudio é enviado somente durante uma análise solicitada pelo usuário, diretamente para a API oficial configurada no código.
+
+A API aceita arquivos de até 25 MB. Para arquivos maiores, o app extrai o áudio localmente e cria fragmentos inicialmente de dez minutos. Cada fragmento é verificado; se ainda ultrapassar 25 MB, a duração é reduzida progressivamente até o limite mínimo configurado. Os timestamps dos fragmentos são recompostos usando a duração real observada por `ffprobe`, e os temporários são removidos ao final, inclusive quando há erro.
+
+> A integração OpenAI exige uma chave válida e conexão de rede. Nenhuma chave real é necessária para compilar ou executar os testes automatizados. Custos, retenção e políticas de dados da API devem ser avaliados pelo proprietário da chave conforme a documentação do provedor.
+
+## Vídeo, validação e foco facial
+
+Antes da análise, o app valida existência e tamanho do arquivo, duração, dimensões, presença de vídeo e presença de áudio quando a transcrição é necessária. O processamento usa FFmpeg/ffprobe local, com verificações de intervalo, resolução e FPS.
+
+O `FfmpegVideoEngine` extrai frames em intervalos de um segundo e usa ML Kit Face Detection para selecionar o maior rosto detectado. O bounding box é normalizado, suavizado temporalmente e aplicado à expressão de crop vertical; quando não há rosto confiável, o pipeline usa um foco central seguro. O engine mantém referência ao processo FFmpeg e destrói o processo em cancelamento ou timeout para evitar tarefas órfãs.
+
+## Execução em segundo plano
+
+`AnalysisWorker` e `ExportWorker` são `CoroutineWorker`s configurados com `HiltWorkerFactory`. O `ShortsWorkScheduler` usa trabalhos únicos por projeto para impedir duplicação de análise ou exportação. Falhas transitórias podem retornar `Result.retry()` dentro do limite de tentativas; falhas permanentes são gravadas com erro e expostas à UI. O progresso do WorkManager e o progresso persistido no Room são atualizados separadamente, permitindo observar o trabalho após recriação da tela.
+
+A exportação reaproveita um resultado concluído quando a combinação de projeto, candidato, plataforma, qualidade, resolução e FPS é a mesma. Itens pendentes, enfileirados, em execução ou falhos permanecem consultáveis para retomada controlada. Atualizações de progresso não apagam mensagens de erro por acidente; a limpeza do erro ocorre apenas em uma transição explícita para execução ou conclusão.
+
+## Requisitos e configuração local
+
+Para compilar, use JDK 17, Android SDK com a plataforma 35, Build Tools 35.0.0 e o Gradle Wrapper. O app suporta Android API 26 ou superior e o workflow de CI usa um emulador API 35. Os binários `ffmpeg` e `ffprobe` necessários para o processamento local permanecem em `app/src/main/assets`.
+
+Crie `local.properties` apontando para o SDK local, por exemplo `sdk.dir=/caminho/para/Android/Sdk`, e não versione esse arquivo. Chaves de IA devem ser inseridas somente dentro do app ou fornecidas por um mecanismo seguro de distribuição; nunca coloque credenciais reais no código, nos testes ou no Git.
+
+## Validação local
 
 Os comandos principais são:
 
 ```bash
-./gradlew test
-./gradlew lint
-./gradlew assembleDebug
-./gradlew test lint assembleDebug --stacktrace --no-daemon
+./gradlew testDebugUnitTest --stacktrace --no-daemon --max-workers=1
+./gradlew lintDebug --stacktrace --no-daemon --max-workers=1
+./gradlew assembleDebug assembleRelease --stacktrace --no-daemon --max-workers=1
+./gradlew test lint assembleDebug assembleRelease --stacktrace --no-daemon --max-workers=1
 ```
 
-A suíte cobre seleção de candidatos, pipeline de sucesso/falha/cancelamento, codec de transcript, parsing de `ffprobe` e contratos de persistência de metadata. Os testes são determinísticos e usam doubles, portanto não exigem chave de IA nem acesso de rede.
+A suíte JVM cobre seleção de candidatos, sucesso/falha/cancelamento do pipeline, codec e parser de transcript, parser de `ffprobe`, validação de mídia, repositórios e transições persistentes de exportação. O teste instrumentado `ShortsDatabaseMigrationTest` verifica a migração Room `1 → 2 → 3`, defaults e preservação de registros em SQLite real:
+
+```bash
+./gradlew :data:connectedDebugAndroidTest --stacktrace --no-daemon --max-workers=1
+```
+
+Os testes automatizados não fazem chamadas ao Grok ou à OpenAI. Testes com FFmpeg real, detecção facial em vídeo real e API externa dependem de mídia, binários, rede e/ou dispositivo disponíveis e devem ser executados em uma etapa de homologação separada.
 
 ## Integração contínua
 
-O workflow `.github/workflows/ci.yml` executa em pushes para `main`/`master` e em pull requests. Ele configura JDK 17, Android SDK 35, cache do Gradle, valida o wrapper, executa testes, lint e build debug, e publica relatórios como artefatos mesmo quando uma etapa falha.
+O workflow `.github/workflows/ci.yml` executa em pushes para `main`/`master` e em pull requests. O job principal configura JDK 17 e Android SDK 35, valida o Gradle Wrapper, executa testes JVM, lint e builds debug/release, e publica relatórios e APKs como artefatos mesmo quando uma etapa falha.
 
-A política de CI não executa chamadas ao Grok. Dessa forma, credenciais não são necessárias para a validação e o resultado do workflow não depende de rede externa além do download normal de dependências durante o primeiro build.
+O segundo job inicializa um emulador API 35 e executa `connectedCheck`, incluindo o teste de migração Room. Há também dependency review em pull requests. A concorrência cancela uma execução antiga da mesma referência quando uma nova alteração é enviada.
 
-## Próximas melhorias
+A CI não recebe nem exige chaves de IA. A publicação automática em lojas, autenticação OAuth de provedores externos e distribuição de segredos de produção não fazem parte deste repositório; devem ser adicionadas posteriormente em um ambiente de release seguro.
 
-A próxima etapa recomendada é substituir `DemoTranscriptionService` por um adaptador de transcrição real, adicionar testes instrumentados Room com migração `1 → 2`, incluir testes de UI Compose para os principais fluxos e completar a persistência das preferências de exportação e do estilo de legenda. Também vale revisar o manifesto para adotar seletor de documentos e permissões de mídia específicas por versão do Android.
+## Privacidade e limitações
+
+O processamento de vídeo, FFmpeg e tracking facial são locais. A transcrição OpenAI e a análise Grok são opt-in e enviam somente os dados necessários à operação solicitada. O app não inclui backend próprio, sincronização em nuvem ou publicação automática. A qualidade do tracking depende da visibilidade do rosto, do frame rate e da mídia; na ausência de detecção, o fallback central evita bloquear a exportação.
+
+O binário FFmpeg precisa estar presente para que análise e exportação reais funcionem em um APK instalado. A disponibilidade do codec, o espaço livre, a duração do vídeo e o consumo de bateria podem limitar operações longas em dispositivos reais. O próximo ciclo pode adicionar testes de UI Compose, métricas estruturadas, telemetria opt-in, políticas de retenção de temporários e uma camada de abstração para provedores de transcrição além da OpenAI.
+
+## Repositório
+
+O projeto é mantido no repositório privado [Kyra2214/ShortsFactory](https://github.com/Kyra2214/ShortsFactory).

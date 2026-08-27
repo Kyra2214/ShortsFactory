@@ -24,7 +24,13 @@ class SecureKeyStore(context: Context) {
     fun getApiKey(): String? = prefs.getString(KEY_API, null)
 
     fun saveApiKey(key: String) {
-        prefs.edit().putString(KEY_API, key).apply()
+        prefs.edit().putString(KEY_API, key.trim()).apply()
+    }
+
+    fun getTranscriptionApiKey(): String? = prefs.getString(KEY_TRANSCRIPTION_API, null)
+
+    fun saveTranscriptionApiKey(key: String) {
+        prefs.edit().putString(KEY_TRANSCRIPTION_API, key.trim()).apply()
     }
 
     fun saveSettings(resolution: String, quality: String, fps: Int, subtitleStyle: String, duration: String) {
@@ -45,6 +51,7 @@ class SecureKeyStore(context: Context) {
 
     companion object {
         private const val KEY_API = "grok_api_key"
+        private const val KEY_TRANSCRIPTION_API = "openai_transcription_api_key"
         private const val KEY_RESOLUTION = "resolution"
         private const val KEY_QUALITY = "quality"
         private const val KEY_FPS = "fps"
