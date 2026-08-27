@@ -1,0 +1,32 @@
+# Android Studio
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# Gradle
+.gradle/
+**/build/
+local.properties
+
+# Kotlin
+.kotlin/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test and runtime outputs
+captures/
+.externalNativeBuild/
+.cxx/
+*.log
+
+# Signing material
+*.jks
+*.keystore
+
+# Local secrets
+.env
+.env.*
+!.env.example
