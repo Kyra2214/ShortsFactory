@@ -50,8 +50,8 @@ jobs:
       - name: Run debug lint
         run: ./gradlew lintDebug --stacktrace --no-daemon --max-workers=2
 
-      - name: Assemble debug and release
-        run: ./gradlew assembleDebug assembleRelease --stacktrace --no-daemon --max-workers=2
+      - name: Assemble debug, release and Android test APKs
+        run: ./gradlew assembleDebug assembleRelease :app:assembleDebugAndroidTest :data:assembleDebugAndroidTest --stacktrace --no-daemon --max-workers=2
 
       - name: Upload test, lint and APK reports
         if: always()
@@ -88,6 +88,9 @@ jobs:
       - name: Install Android SDK components
         run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "system-images;android-35;google_apis;x86_64"
 
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
       - name: Make Gradle wrapper executable
         run: chmod +x ./gradlew
 
@@ -97,7 +100,7 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      - name: Run connected checks on API 35
+      - name: Run Room migration checks on API 35
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
@@ -109,7 +112,7 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           disable-animations: true
           disable-spellchecker: true
-          script: ./gradlew connectedCheck --stacktrace --no-daemon --max-workers=2
+          script: ./gradlew :data:connectedDebugAndroidTest --stacktrace --no-daemon --max-workers=2
 
       - name: Upload instrumented reports
         if: always()
