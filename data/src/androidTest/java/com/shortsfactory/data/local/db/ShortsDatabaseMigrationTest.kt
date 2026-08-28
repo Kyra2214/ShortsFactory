@@ -123,6 +123,13 @@ class ShortsDatabaseMigrationTest {
                     'Motivo', NULL, 'pending', 1000)
                 """.trimIndent()
             )
+            legacy.execSQL(
+                """
+                INSERT INTO exports (
+                    id, projectId, platform, quality, resolution, fps, outputPath, status, createdAtMs
+                ) VALUES (1, 1, 'youtube', 'high', '1080x1920', 30, NULL, 'queued', 1000)
+                """.trimIndent()
+            )
             legacy.version = 1
         } finally {
             legacy.close()
