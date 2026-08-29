@@ -148,7 +148,7 @@ fun SettingsScreen(
                 onClick = onOpenGrokSettings,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text("Configurar Grok (IA)")
+                Text("Configurar IA e chaves")
             }
         }
     }

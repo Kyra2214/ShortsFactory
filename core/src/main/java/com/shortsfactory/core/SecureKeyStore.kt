@@ -4,8 +4,9 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import org.json.JSONArray
 
-/** Armazenamento criptografado de chaves sensíveis (ex.: chave da API xAI/Grok). */
+/** Armazenamento criptografado de chaves sensíveis usadas pelas integrações externas. */
 class SecureKeyStore(context: Context) {
 
     private val prefs: SharedPreferences by lazy {
@@ -21,10 +22,45 @@ class SecureKeyStore(context: Context) {
         )
     }
 
-    fun getApiKey(): String? = prefs.getString(KEY_API, null)
+    /**
+     * Retorna as chaves xAI na ordem configurada.
+     * A chave antiga, salva antes do suporte a múltiplas chaves, é migrada em memória.
+     */
+    fun getApiKeys(): List<String> {
+        val encoded = prefs.getString(KEY_API_KEYS, null)
+        if (!encoded.isNullOrBlank()) {
+            return runCatching {
+                val array = JSONArray(encoded)
+                buildList {
+                    for (index in 0 until array.length()) {
+                        array.optString(index).trim().takeIf { it.isNotEmpty() }?.let(::add)
+                    }
+                }
+            }.getOrDefault(emptyList())
+        }
+
+        return prefs.getString(KEY_API, null)
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+            ?.let(::listOf)
+            ?: emptyList()
+    }
+
+    /** Mantém compatibilidade com consumidores antigos que ainda solicitam uma única chave. */
+    fun getApiKey(): String? = getApiKeys().firstOrNull()
 
     fun saveApiKey(key: String) {
-        prefs.edit().putString(KEY_API, key.trim()).apply()
+        saveApiKeys(listOf(key))
+    }
+
+    /** Salva as chaves sem duplicação, preservando a ordem de tentativa do usuário. */
+    fun saveApiKeys(keys: List<String>) {
+        val normalized = keys.map(String::trim).filter(String::isNotEmpty).distinct()
+        val array = JSONArray().apply { normalized.forEach(::put) }
+        prefs.edit()
+            .putString(KEY_API_KEYS, array.toString())
+            .putString(KEY_API, normalized.firstOrNull())
+            .apply()
     }
 
     fun getTranscriptionApiKey(): String? = prefs.getString(KEY_TRANSCRIPTION_API, null)
@@ -51,6 +87,7 @@ class SecureKeyStore(context: Context) {
 
     companion object {
         private const val KEY_API = "grok_api_key"
+        private const val KEY_API_KEYS = "xai_api_keys"
         private const val KEY_TRANSCRIPTION_API = "openai_transcription_api_key"
         private const val KEY_RESOLUTION = "resolution"
         private const val KEY_QUALITY = "quality"

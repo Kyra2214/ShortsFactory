@@ -14,7 +14,7 @@ enum class PipelineStage(val label: String) {
     VideoInput("Importação do vídeo"),
     AudioExtraction("Extração de áudio"),
     Transcription("Transcrição"),
-    AIAnalysis("Análise de IA (Grok)"),
+    AIAnalysis("Análise de IA"),
     CandidateSelection("Seleção de candidatos"),
     SubtitleGeneration("Geração de legendas"),
     FocusTracking("Rastreamento de foco")

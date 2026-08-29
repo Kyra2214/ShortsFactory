@@ -18,29 +18,47 @@ import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
 
-/** Provedor de análise via Grok (xAI), usando a chave salva pelo usuário. */
+/**
+ * Provedor xAI/Grok com descoberta de modelos e fallback entre chaves.
+ *
+ * A API de modelos é consultada para priorizar os modelos de texto liberados para cada chave.
+ * Quando uma chave ou modelo falha, a próxima combinação é tentada automaticamente.
+ */
 class GrokProvider(private val keyStore: SecureKeyStore) : AIProvider {
 
-    override val providerName: String = "Grok (xAI)"
+    override val providerName: String = "IA xAI/Grok"
 
-    @Volatile private var overrideKey: String? = null
+    @Volatile private var overrideKeys: List<String>? = null
+
+    @Volatile var lastSuccessfulModel: String? = null
+        private set
+
+    @Volatile var lastSuccessfulKeyIndex: Int? = null
+        private set
 
     /** Chave temporária usada apenas para testar conexão antes de salvar. */
     fun overrideKey(key: String) {
-        overrideKey = key
+        overrideKeys(listOf(key))
+    }
+
+    /** Chaves temporárias usadas apenas para testar conexão antes de salvar. */
+    fun overrideKeys(keys: List<String>) {
+        overrideKeys = keys.map(String::trim).filter(String::isNotEmpty).distinct()
     }
 
     /** Persiste uma chave validada. */
     fun persistApiKey(key: String) {
-        keyStore.saveApiKey(key)
+        persistApiKeys(listOf(key))
+    }
+
+    /** Persiste as chaves validadas na ordem de fallback definida pelo usuário. */
+    fun persistApiKeys(keys: List<String>) {
+        keyStore.saveApiKeys(keys)
     }
 
     override suspend fun analyzeVideo(transcript: Transcript, hint: GenerationSummaryHint): AIAnalysisResult {
-        val apiKey = apiKey()
         val prompt = buildPrompt(transcript, hint)
-        val reply = callGrok(apiKey, prompt)
-
-        return parseAnalysis(reply)
+        return withFallback(prompt, ::parseAnalysis)
     }
 
     override suspend fun searchTrends(
@@ -50,23 +68,70 @@ class GrokProvider(private val keyStore: SecureKeyStore) : AIProvider {
         niche: String
     ): List<TrendCard> {
         val prompt = buildTrendPrompt(query, region, platform, niche)
-        val reply = runCatching { callGrok(apiKey(), prompt) }.getOrElse { return emptyList() }
-        return parseTrends(reply)
+        return runCatching { withFallback(prompt, ::parseTrends) }.getOrDefault(emptyList())
     }
 
     override suspend fun analyzeTrends(query: String, region: String): String {
         val prompt = buildTrendAnalysisPrompt(query, region)
-        return runCatching { callGrok(apiKey(), prompt) }.getOrElse { "Falha ao consultar a IA: ${it.message}" }
+        return runCatching { withFallback(prompt, ::extractMessageContent) }
+            .getOrElse { "Falha ao consultar a IA: ${it.message}" }
     }
 
     override suspend fun briefFromTrend(trendTitle: String, platform: String, region: String): String {
         val prompt = buildBriefPrompt(trendTitle, platform, region)
-        return runCatching { callGrok(apiKey(), prompt) }.getOrElse { "Falha ao consultar a IA: ${it.message}" }
+        return runCatching { withFallback(prompt, ::extractMessageContent) }
+            .getOrElse { "Falha ao consultar a IA: ${it.message}" }
     }
 
-    private fun apiKey(): String = overrideKey ?: (keyStore.getApiKey() ?: throw IllegalStateException(
-        "Chave da API Grok não configurada. Configure em Configurações → Grok."
-    ))
+    /**
+     * Executa a mesma operação em cada combinação chave/modelo até obter uma resposta válida.
+     * Erros 401/403/404/429/5xx e falhas de parsing não interrompem o fallback.
+     */
+    private suspend fun <T> withFallback(prompt: String, transform: (String) -> T): T {
+        val configuredKeys = apiKeys()
+        require(configuredKeys.isNotEmpty()) {
+            "Nenhuma chave xAI configurada. Configure em Configurações → IA e chaves."
+        }
+
+        var lastError: Throwable? = null
+        configuredKeys.forEachIndexed { keyIndex, apiKey ->
+            val discoveredModels = runCatching { listAvailableTextModels(apiKey) }
+                .getOrDefault(emptyList())
+            val models = (discoveredModels + DEFAULT_MODELS).distinct()
+
+            models.forEach { model ->
+                try {
+                    val reply = callGrok(apiKey, model, prompt)
+                    val result = transform(reply)
+                    lastSuccessfulModel = model
+                    lastSuccessfulKeyIndex = keyIndex
+                    return result
+                } catch (error: Throwable) {
+                    if (error is kotlinx.coroutines.CancellationException) throw error
+                    lastError = error
+                }
+            }
+        }
+
+        throw IllegalStateException(
+            "Nenhuma chave/modelo xAI disponível no momento" +
+                (lastError?.message?.let { ": ${it.take(180)}" } ?: ".")
+        )
+    }
+
+    private fun apiKeys(): List<String> = overrideKeys ?: keyStore.getApiKeys()
+
+    private fun listAvailableTextModels(apiKey: String): List<String> = withHttpConnection(
+        method = "GET",
+        endpoint = MODELS_ENDPOINT,
+        apiKey = apiKey
+    ) { connection ->
+        val response = readResponse(connection)
+        val root = Json.parseToJsonElement(response).jsonObject
+        root["data"]?.jsonArray?.mapNotNull { element ->
+            element.jsonObject["id"]?.jsonPrimitive?.content
+        }?.filter(::isTextModel) ?: emptyList()
+    }
 
     private fun buildPrompt(transcript: Transcript, hint: GenerationSummaryHint): String {
         val segmentsText = transcript.segments.joinToString("\n") { "[${it.startMs}-${it.endMs}] ${it.text}" }
@@ -108,27 +173,54 @@ Retorne em Markdown:
 - Variações de ângulo (2 a 3 formas diferentes de abordar o mesmo tema)
 Não invente métricas. O objetivo é inspirar criação original, nunca reproduzir conteúdo de terceiros."""
 
-    private suspend fun callGrok(apiKey: String, prompt: String): String = withContext(Dispatchers.IO) {
-        val url = URL(GROK_ENDPOINT)
-        val conn = url.openConnection() as HttpURLConnection
-        conn.requestMethod = "POST"
-        conn.setRequestProperty("Authorization", "Bearer $apiKey")
-        conn.setRequestProperty("Content-Type", "application/json")
-        conn.doOutput = true
-        val body = """{"model":"grok-4-fast","messages":[{"role":"user","content":${escapeJson(prompt)}}]}"""
-        OutputStreamWriter(conn.outputStream).use { it.write(body) }
-        val stream = if (conn.responseCode == 200) conn.inputStream else conn.errorStream
-        val response = stream?.bufferedReader()?.readText() ?: ""
-        conn.disconnect()
-        if (conn.responseCode != 200) {
-            throw RuntimeException("Grok retornou erro ${conn.responseCode}: ${response.take(200)}")
+    private suspend fun callGrok(apiKey: String, model: String, prompt: String): String =
+        withContext(Dispatchers.IO) {
+            withHttpConnection(
+                method = "POST",
+                endpoint = CHAT_ENDPOINT,
+                apiKey = apiKey
+            ) { connection ->
+                connection.setRequestProperty("Content-Type", "application/json")
+                connection.doOutput = true
+                val body = """{"model":"${escapeJson(model).trim('"')}","messages":[{"role":"user","content":${escapeJson(prompt)}}]}"""
+                OutputStreamWriter(connection.outputStream).use { it.write(body) }
+                readResponse(connection)
+            }
         }
-        response
+
+    private fun <T> withHttpConnection(
+        method: String,
+        endpoint: String,
+        apiKey: String,
+        block: (HttpURLConnection) -> T
+    ): T {
+        val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+            requestMethod = method
+            connectTimeout = REQUEST_TIMEOUT_MS
+            readTimeout = REQUEST_TIMEOUT_MS
+            setRequestProperty("Authorization", "Bearer $apiKey")
+            setRequestProperty("Accept", "application/json")
+        }
+        return try {
+            block(connection)
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun readResponse(connection: HttpURLConnection): String {
+        val statusCode = connection.responseCode
+        val stream = if (statusCode in 200..299) connection.inputStream else connection.errorStream
+        val response = stream?.bufferedReader()?.use { it.readText() } ?: ""
+        if (statusCode !in 200..299) {
+            throw RuntimeException("xAI retornou erro $statusCode: ${response.take(200)}")
+        }
+        return response
     }
 
     private fun parseAnalysis(reply: String): AIAnalysisResult {
         val json = Json { ignoreUnknownKeys = true }
-        val root = json.parseToJsonElement(extractJson(reply)).jsonObject
+        val root = json.parseToJsonElement(extractJson(extractMessageContent(reply))).jsonObject
         val candidates = root["candidates"]?.jsonArray?.map { element ->
             val obj = element.jsonObject
             ShortCandidate(
@@ -159,7 +251,7 @@ Não invente métricas. O objetivo é inspirar criação original, nunca reprodu
 
     private fun parseTrends(reply: String): List<TrendCard> {
         val json = Json { ignoreUnknownKeys = true }
-        val root = json.parseToJsonElement(extractJson(reply)).jsonObject
+        val root = json.parseToJsonElement(extractJson(extractMessageContent(reply))).jsonObject
         return (root["trends"] ?: root["results"])?.jsonArray?.map { element ->
             val obj = element.jsonObject
             TrendCard(
@@ -174,6 +266,19 @@ Não invente métricas. O objetivo é inspirar criação original, nunca reprodu
         } ?: emptyList()
     }
 
+    private fun extractMessageContent(raw: String): String {
+        val root = runCatching { Json.parseToJsonElement(raw).jsonObject }.getOrNull() ?: return raw
+        return root["choices"]?.jsonArray
+            ?.firstOrNull()
+            ?.jsonObject
+            ?.get("message")
+            ?.jsonObject
+            ?.get("content")
+            ?.jsonPrimitive
+            ?.content
+            ?: raw
+    }
+
     private fun extractJson(raw: String): String {
         val start = raw.indexOf('{')
         val end = raw.lastIndexOf('}')
@@ -183,7 +288,19 @@ Não invente métricas. O objetivo é inspirar criação original, nunca reprodu
     private fun escapeJson(value: String): String =
         kotlinx.serialization.json.JsonPrimitive(value).toString()
 
+    private fun isTextModel(model: String): Boolean {
+        val normalized = model.lowercase()
+        return normalized.startsWith("grok") &&
+            !normalized.contains("imagine") &&
+            !normalized.contains("video") &&
+            !normalized.contains("image") &&
+            !normalized.contains("voice")
+    }
+
     companion object {
-        private const val GROK_ENDPOINT = "https://api.x.ai/v1/chat/completions"
+        private const val CHAT_ENDPOINT = "https://api.x.ai/v1/chat/completions"
+        private const val MODELS_ENDPOINT = "https://api.x.ai/v1/models"
+        private const val REQUEST_TIMEOUT_MS = 30_000
+        private val DEFAULT_MODELS = listOf("grok-4.6", "grok-4-fast", "grok-3-mini")
     }
 }
