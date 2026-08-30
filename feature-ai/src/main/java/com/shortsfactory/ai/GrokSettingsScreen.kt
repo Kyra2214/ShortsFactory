@@ -205,7 +205,7 @@ fun GrokSettingsScreen(
                 modifier = Modifier.padding(top = 16.dp)
             )
             Text(
-                text = "A chave OpenAI é usada somente para enviar o áudio à transcrição. O valor não é exibido novamente nem incluído nos logs.",
+                text = "A chave OpenAI pode ser usada para transcrição e análise de conteúdo. Ela será tentada primeiro; se estiver sem acesso ou limite, o app tentará a xAI automaticamente. O valor não é exibido novamente nem incluído nos logs.",
                 style = MaterialTheme.typography.bodyMedium
             )
             OutlinedTextField(
@@ -227,16 +227,35 @@ fun GrokSettingsScreen(
             Button(
                 onClick = {
                     if (transcriptionKey.isBlank()) {
-                        transcriptionStatus = "Informe a chave de transcrição primeiro."
-                    } else {
-                        keyStore.saveTranscriptionApiKey(transcriptionKey)
-                        transcriptionKey = ""
-                        transcriptionStatus = "Chave de transcrição salva com segurança no dispositivo."
+                        transcriptionStatus = "Informe a chave OpenAI primeiro."
+                        return@Button
+                    }
+                    testing = true
+                    scope.launch {
+                        try {
+                            val provider = OpenAiProvider(keyStore).also { it.overrideKey(transcriptionKey) }
+                            provider.analyzeVideo(
+                                com.shortsfactory.domain.model.Transcript(
+                                    listOf(
+                                        com.shortsfactory.domain.model.TranscriptSegment(0, 5000, "teste de conexão")
+                                    )
+                                ),
+                                com.shortsfactory.domain.pipeline.GenerationSummaryHint("30s")
+                            )
+                            keyStore.saveTranscriptionApiKey(transcriptionKey)
+                            transcriptionKey = ""
+                            transcriptionStatus = "OpenAI validada e salva. Ela será a primeira opção para análise e transcrição."
+                        } catch (e: Exception) {
+                            transcriptionStatus = "OpenAI não está disponível para esta chave. Verifique a conta e os limites."
+                        } finally {
+                            testing = false
+                        }
                     }
                 },
+                enabled = !testing,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text("Salvar chave de transcrição")
+                Text(if (testing) "Testando OpenAI..." else "Testar e salvar OpenAI")
             }
             transcriptionStatus?.let {
                 Card(modifier = Modifier.fillMaxWidth()) {
@@ -244,7 +263,7 @@ fun GrokSettingsScreen(
                 }
             }
             Text(
-                text = "As chaves ficam armazenadas criptograficamente no dispositivo. O app tenta as opções em ordem e passa para a próxima quando uma combinação não está disponível.",
+                text = "As chaves ficam armazenadas criptograficamente no dispositivo. A ordem automática é OpenAI primeiro e xAI depois; o app passa para a próxima quando uma opção não está disponível.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 4.dp)

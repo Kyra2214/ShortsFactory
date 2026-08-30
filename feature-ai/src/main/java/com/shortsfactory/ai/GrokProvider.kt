@@ -18,15 +18,59 @@ import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
 
+internal data class ChatProviderConfig(
+    val displayName: String,
+    val chatEndpoint: String,
+    val modelsEndpoint: String?,
+    val defaultModels: List<String>,
+    val modelFilter: (String) -> Boolean
+) {
+    companion object {
+        fun xAi() = ChatProviderConfig(
+            displayName = "IA xAI/Grok",
+            chatEndpoint = "https://api.x.ai/v1/chat/completions",
+            modelsEndpoint = "https://api.x.ai/v1/models",
+            defaultModels = listOf("grok-4.6", "grok-4-fast", "grok-3-mini"),
+            modelFilter = { model ->
+                val normalized = model.lowercase()
+                normalized.startsWith("grok") &&
+                    !normalized.contains("imagine") &&
+                    !normalized.contains("video") &&
+                    !normalized.contains("image") &&
+                    !normalized.contains("voice")
+            }
+        )
+
+        fun openAi() = ChatProviderConfig(
+            displayName = "OpenAI",
+            chatEndpoint = "https://api.openai.com/v1/chat/completions",
+            modelsEndpoint = "https://api.openai.com/v1/models",
+            defaultModels = listOf("gpt-4o-mini", "gpt-4.1-mini", "gpt-4o"),
+            modelFilter = { model ->
+                val normalized = model.lowercase()
+                normalized.startsWith("gpt-") &&
+                    !normalized.contains("audio") &&
+                    !normalized.contains("image") &&
+                    !normalized.contains("realtime") &&
+                    !normalized.contains("transcribe")
+            }
+        )
+    }
+}
+
 /**
- * Provedor xAI/Grok com descoberta de modelos e fallback entre chaves.
+ * Provedor de chat com descoberta de modelos e fallback entre chaves.
  *
  * A API de modelos é consultada para priorizar os modelos de texto liberados para cada chave.
  * Quando uma chave ou modelo falha, a próxima combinação é tentada automaticamente.
  */
-class GrokProvider(private val keyStore: SecureKeyStore) : AIProvider {
+internal open class GrokProvider(
+    private val keyStore: SecureKeyStore,
+    private val config: ChatProviderConfig = ChatProviderConfig.xAi(),
+    private val keyProvider: () -> List<String> = { keyStore.getApiKeys() }
+) : AIProvider {
 
-    override val providerName: String = "IA xAI/Grok"
+    override val providerName: String = config.displayName
 
     @Volatile private var overrideKeys: List<String>? = null
 
@@ -68,19 +112,17 @@ class GrokProvider(private val keyStore: SecureKeyStore) : AIProvider {
         niche: String
     ): List<TrendCard> {
         val prompt = buildTrendPrompt(query, region, platform, niche)
-        return runCatching { withFallback(prompt, ::parseTrends) }.getOrDefault(emptyList())
+        return withFallback(prompt, ::parseTrends)
     }
 
     override suspend fun analyzeTrends(query: String, region: String): String {
         val prompt = buildTrendAnalysisPrompt(query, region)
-        return runCatching { withFallback(prompt, ::extractMessageContent) }
-            .getOrElse { "Falha ao consultar a IA: ${it.message}" }
+        return withFallback(prompt, ::extractMessageContent)
     }
 
     override suspend fun briefFromTrend(trendTitle: String, platform: String, region: String): String {
         val prompt = buildBriefPrompt(trendTitle, platform, region)
-        return runCatching { withFallback(prompt, ::extractMessageContent) }
-            .getOrElse { "Falha ao consultar a IA: ${it.message}" }
+        return withFallback(prompt, ::extractMessageContent)
     }
 
     /**
@@ -90,14 +132,14 @@ class GrokProvider(private val keyStore: SecureKeyStore) : AIProvider {
     private suspend fun <T> withFallback(prompt: String, transform: (String) -> T): T {
         val configuredKeys = apiKeys()
         require(configuredKeys.isNotEmpty()) {
-            "Nenhuma chave xAI configurada. Configure em Configurações → IA e chaves."
+            "Nenhuma chave configurada para ${config.displayName}. Configure em Configurações → IA e chaves."
         }
 
         var lastError: Throwable? = null
         configuredKeys.forEachIndexed { keyIndex, apiKey ->
             val discoveredModels = runCatching { listAvailableTextModels(apiKey) }
                 .getOrDefault(emptyList())
-            val models = (discoveredModels + DEFAULT_MODELS).distinct()
+            val models = (discoveredModels + config.defaultModels).distinct()
 
             models.forEach { model ->
                 try {
@@ -114,23 +156,26 @@ class GrokProvider(private val keyStore: SecureKeyStore) : AIProvider {
         }
 
         throw IllegalStateException(
-            "Nenhuma chave/modelo xAI disponível no momento" +
+            "Nenhuma chave/modelo disponível para ${config.displayName} no momento" +
                 (lastError?.message?.let { ": ${it.take(180)}" } ?: ".")
         )
     }
 
-    private fun apiKeys(): List<String> = overrideKeys ?: keyStore.getApiKeys()
+    private fun apiKeys(): List<String> = overrideKeys ?: keyProvider()
 
-    private fun listAvailableTextModels(apiKey: String): List<String> = withHttpConnection(
+    private fun listAvailableTextModels(apiKey: String): List<String> {
+        val endpoint = config.modelsEndpoint ?: return emptyList()
+        return withHttpConnection(
         method = "GET",
-        endpoint = MODELS_ENDPOINT,
+        endpoint = endpoint,
         apiKey = apiKey
     ) { connection ->
         val response = readResponse(connection)
         val root = Json.parseToJsonElement(response).jsonObject
         root["data"]?.jsonArray?.mapNotNull { element ->
             element.jsonObject["id"]?.jsonPrimitive?.content
-        }?.filter(::isTextModel) ?: emptyList()
+        }?.filter(config.modelFilter) ?: emptyList()
+        }
     }
 
     private fun buildPrompt(transcript: Transcript, hint: GenerationSummaryHint): String {
@@ -177,7 +222,7 @@ Não invente métricas. O objetivo é inspirar criação original, nunca reprodu
         withContext(Dispatchers.IO) {
             withHttpConnection(
                 method = "POST",
-                endpoint = CHAT_ENDPOINT,
+                endpoint = config.chatEndpoint,
                 apiKey = apiKey
             ) { connection ->
                 connection.setRequestProperty("Content-Type", "application/json")
@@ -288,19 +333,14 @@ Não invente métricas. O objetivo é inspirar criação original, nunca reprodu
     private fun escapeJson(value: String): String =
         kotlinx.serialization.json.JsonPrimitive(value).toString()
 
-    private fun isTextModel(model: String): Boolean {
-        val normalized = model.lowercase()
-        return normalized.startsWith("grok") &&
-            !normalized.contains("imagine") &&
-            !normalized.contains("video") &&
-            !normalized.contains("image") &&
-            !normalized.contains("voice")
-    }
-
     companion object {
-        private const val CHAT_ENDPOINT = "https://api.x.ai/v1/chat/completions"
-        private const val MODELS_ENDPOINT = "https://api.x.ai/v1/models"
         private const val REQUEST_TIMEOUT_MS = 30_000
-        private val DEFAULT_MODELS = listOf("grok-4.6", "grok-4-fast", "grok-3-mini")
     }
 }
+
+/** OpenAI usa a mesma camada de chat, mas lê a chave já cadastrada para transcrição. */
+internal class OpenAiProvider(keyStore: SecureKeyStore) : GrokProvider(
+    keyStore = keyStore,
+    config = ChatProviderConfig.openAi(),
+    keyProvider = { listOfNotNull(keyStore.getTranscriptionApiKey()) }
+)

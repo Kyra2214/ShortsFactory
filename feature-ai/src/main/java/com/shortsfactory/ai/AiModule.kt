@@ -14,5 +14,10 @@ object AiModule {
 
     @Provides
     @Singleton
-    fun provideAIProvider(keyStore: SecureKeyStore): AIProvider = GrokProvider(keyStore)
+    fun provideAIProvider(keyStore: SecureKeyStore): AIProvider = MultiAIProvider(
+        providers = listOf(
+            OpenAiProvider(keyStore),
+            GrokProvider(keyStore)
+        )
+    )
 }
