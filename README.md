@@ -58,10 +58,10 @@ Crie `local.properties` apontando para o SDK local, por exemplo `sdk.dir=/caminh
 Os comandos principais são:
 
 ```bash
-./gradlew testDebugUnitTest --stacktrace --no-daemon --max-workers=1
+./gradlew :domain:test testDebugUnitTest --stacktrace --no-daemon --max-workers=1
 ./gradlew lintDebug --stacktrace --no-daemon --max-workers=1
 ./gradlew assembleDebug assembleRelease --stacktrace --no-daemon --max-workers=1
-./gradlew test lint assembleDebug assembleRelease --stacktrace --no-daemon --max-workers=1
+./gradlew :domain:test test lint assembleDebug assembleRelease --stacktrace --no-daemon --max-workers=1
 ```
 
 A suíte JVM cobre seleção de candidatos, sucesso/falha/cancelamento do pipeline, codec e parser de transcript, parser de `ffprobe`, validação de mídia, repositórios e transições persistentes de exportação. O teste instrumentado `ShortsDatabaseMigrationTest` verifica a migração Room `1 → 2 → 3`, defaults e preservação de registros em SQLite real:
@@ -74,9 +74,9 @@ Os testes automatizados não fazem chamadas ao Grok ou à OpenAI. Testes com FFm
 
 ## Integração contínua
 
-O workflow `.github/workflows/ci.yml` executa em pushes para `main`/`master` e em pull requests. O job principal configura JDK 17, usa o Android SDK disponível no runner, valida o Gradle Wrapper, executa testes JVM, lint e builds debug/release, e publica relatórios e APKs como artefatos mesmo quando uma etapa falha.
+O workflow `.github/workflows/ci.yml` executa em pushes para `main`/`master` e em pull requests. O job principal configura JDK 17 e Android SDK, valida o Gradle Wrapper e os hashes FFmpeg, executa os testes JVM (incluindo `:domain:test`), lint e builds debug/release/test. Os uploads auxiliares de relatórios/APKs são tentados mesmo quando uma etapa falha, mas são não bloqueantes: se a quota do GitHub Actions estiver cheia, o gate de código continua avaliável, embora os artefatos não sejam armazenados.
 
-O segundo job inicializa um emulador API 35 e executa `connectedCheck`, incluindo o teste de migração Room. A antiga etapa de dependency review foi removida porque o repositório privado não tem GitHub Advanced Security/Dependency Graph habilitado; ela não deve ser tratada como um gate executável. A concorrência cancela uma execução antiga da mesma referência quando uma nova alteração é enviada.
+O segundo job inicializa um emulador API 35 x86_64 e executa `:data:connectedDebugAndroidTest`, incluindo o teste de migração Room. Isso não valida execução do binário FFmpeg arm64 em aparelho real. A antiga etapa de dependency review foi removida porque o repositório privado não tem GitHub Advanced Security/Dependency Graph habilitado; ela não deve ser tratada como um gate executável. A concorrência cancela uma execução antiga da mesma referência quando uma nova alteração é enviada.
 
 A CI não recebe nem exige chaves de IA. A publicação automática em lojas, autenticação OAuth de provedores externos e distribuição de segredos de produção não fazem parte deste repositório; devem ser adicionadas posteriormente em um ambiente de release seguro.
 

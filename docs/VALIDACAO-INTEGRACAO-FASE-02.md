@@ -37,7 +37,10 @@ As execuções anteriores do PR terminaram como canceladas antes de iniciar qual
 - [Run 37366097762](https://github.com/Kyra2214/ShortsFactory/actions/runs/37366097762) — job unitário cancelado, instrumentação ignorada.
 - [Run 37366082783](https://github.com/Kyra2214/ShortsFactory/actions/runs/37366082783) — job unitário cancelado, instrumentação ignorada.
 
-**Validação do commit integrado:** pendente; será registrada aqui após o workflow da branch terminar.
+- [Run 37380784369](https://github.com/Kyra2214/ShortsFactory/actions/runs/37380784369) — testes JVM, lint e builds debug/release/Android test **passaram**. A execução ficou vermelha somente porque `actions/upload-artifact@v4` não conseguiu criar o artefato: a quota de armazenamento do GitHub Actions estava esgotada. Como o job principal depende do upload, o teste instrumentado foi ignorado.
+- Correção aplicada ao workflow: os uploads de relatórios/APKs são auxiliares e agora usam `continue-on-error: true`, tanto no job principal quanto no instrumentado. Assim, a quota não mascara nem interrompe os gates de compilação/teste; os relatórios podem não ser armazenados enquanto a quota estiver cheia.
+
+**Nova validação após tornar o upload não bloqueante:** pendente; será registrada após o workflow atualizado concluir.
 
 ## Limites e pendências
 

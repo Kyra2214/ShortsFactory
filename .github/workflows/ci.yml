@@ -61,9 +61,10 @@ jobs:
       - name: Assemble debug, release and Android test APKs
         run: ./gradlew assembleDebug assembleRelease :app:assembleDebugAndroidTest :data:assembleDebugAndroidTest --stacktrace --no-daemon --max-workers=2
 
-      - name: Upload test, lint and APK reports
+      - name: Upload test, lint and APK reports (non-blocking)
         if: always()
         uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: unit-lint-build-reports
           if-no-files-found: ignore
@@ -121,9 +122,10 @@ jobs:
           disable-spellchecker: true
           script: ./gradlew :data:connectedDebugAndroidTest --stacktrace --no-daemon --max-workers=2
 
-      - name: Upload instrumented reports
+      - name: Upload instrumented reports (non-blocking)
         if: always()
         uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: instrumented-reports
           if-no-files-found: ignore
