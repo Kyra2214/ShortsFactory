@@ -299,15 +299,20 @@ Não invente métricas. O objetivo é inspirar criação original, nunca reprodu
         val root = json.parseToJsonElement(extractJson(extractMessageContent(reply))).jsonObject
         return (root["trends"] ?: root["results"])?.jsonArray?.map { element ->
             val obj = element.jsonObject
-            TrendCard(
-                title = obj["title"]?.jsonPrimitive?.content ?: "",
-                platform = obj["platform"]?.jsonPrimitive?.content ?: "",
-                region = obj["region"]?.jsonPrimitive?.content ?: "",
-                views = obj["views"]?.jsonPrimitive?.takeIf { it.content != "null" }?.content,
-                engagement = obj["engagement"]?.jsonPrimitive?.takeIf { it.content != "null" }?.content,
-                sourceUrl = obj["sourceUrl"]?.jsonPrimitive?.content ?: "",
-                openable = obj["openable"]?.jsonPrimitive?.content == "true"
-            )
+            run {
+                val sourceUrl = obj["sourceUrl"]?.jsonPrimitive?.content ?: ""
+                val openable = obj["openable"]?.jsonPrimitive?.content == "true"
+                val verifiedSource = openable && sourceUrl.startsWith("http")
+                TrendCard(
+                    title = obj["title"]?.jsonPrimitive?.content ?: "",
+                    platform = obj["platform"]?.jsonPrimitive?.content ?: "",
+                    region = obj["region"]?.jsonPrimitive?.content ?: "",
+                    views = if (verifiedSource) obj["views"]?.jsonPrimitive?.takeIf { it.content != "null" }?.content else null,
+                    engagement = if (verifiedSource) obj["engagement"]?.jsonPrimitive?.takeIf { it.content != "null" }?.content else null,
+                    sourceUrl = sourceUrl,
+                    openable = openable
+                )
+            }
         } ?: emptyList()
     }
 
