@@ -263,7 +263,7 @@ class FfmpegVideoEngine constructor(private val appContext: Context) : VideoEngi
         val expr = StringBuilder("($axis-$cropSizeExpr)*")
         val (_, c0) = anchors[0]
         val (_, c1) = anchors[1]
-        expr.append("if(lt(t\\,$t1)\\,$c0\\,")
+        expr.append("if(lt(t\\,${anchors[1].first})\\,$c0\\,")
         for (i in 1 until anchors.size - 1) {
             val (a0, b0) = anchors[i]
             val (a1, b1) = anchors[i + 1]
