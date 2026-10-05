@@ -2,7 +2,7 @@ name: ShortsFactory CI
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main, master, 'roadmap-12-fases' ]
   pull_request:
     branches: [ main, master ]
 
