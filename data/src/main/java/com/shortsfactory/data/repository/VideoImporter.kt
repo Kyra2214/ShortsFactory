@@ -79,8 +79,14 @@ class VideoImporter(private val appContext: Context) {
         try {
             val extension = guessExtension(uri.toString(), null)
             val outputFile = File(appContext.filesDir, "video_${System.currentTimeMillis()}.$extension")
-            appContext.contentResolver.openInputStream(uri)?.use { input ->
-                FileOutputStream(outputFile).use { output -> input.copyTo(output) }
+            val input = appContext.contentResolver.openInputStream(uri)
+                ?: return@withContext ImportResult.Failure("Não foi possível abrir o arquivo selecionado.")
+            input.use {
+                FileOutputStream(outputFile).use { output -> it.copyTo(output) }
+            }
+            if (!outputFile.isFile || outputFile.length() == 0L) {
+                outputFile.delete()
+                return@withContext ImportResult.Failure("O arquivo selecionado está vazio.")
             }
             ImportResult.Success(outputFile.absolutePath)
         } catch (e: Exception) {
