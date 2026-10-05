@@ -13,6 +13,7 @@ import com.shortsfactory.domain.model.ExportPlatform
 import com.shortsfactory.domain.model.ExportQuality
 import com.shortsfactory.domain.model.ResolutionPreset
 import com.shortsfactory.domain.pipeline.ClipSpec
+import com.shortsfactory.domain.pipeline.SubtitleTiming
 import com.shortsfactory.domain.pipeline.VideoEngine
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ensureActive
@@ -119,17 +120,7 @@ class ShortsProcessingManager @Inject constructor(
             try {
                 val subtitles = subtitleRepository.getSegments(candidate.id).ifEmpty {
                     transcriptRepository.get(projectId)?.segments
-                        ?.asSequence()
-                        ?.filter { it.endMs > candidate.startMs && it.startMs < candidate.endMs }
-                        ?.map { segment ->
-                            com.shortsfactory.domain.model.SubtitleSegment(
-                                startMs = maxOf(segment.startMs, candidate.startMs),
-                                endMs = minOf(segment.endMs, candidate.endMs),
-                                words = segment.text.trim().split(Regex("\\s+")).filter(String::isNotBlank)
-                            )
-                        }
-                        ?.filter { it.endMs > it.startMs && it.words.isNotEmpty() }
-                        ?.toList()
+                        ?.let { SubtitleTiming.fromTranscript(it, candidate.startMs, candidate.endMs) }
                         .orEmpty()
                 }
                 val style = resolveSubtitleStyle("creator")

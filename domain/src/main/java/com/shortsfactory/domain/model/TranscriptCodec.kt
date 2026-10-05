@@ -26,9 +26,9 @@ object TranscriptCodec {
                 TranscriptSegment(segment.startMs, segment.endMs, segment.text)
             })
         }
-    } catch (_: SerializationException) {
+    } catch (e: SerializationException) {
         null
-    } catch (_: IllegalArgumentException) {
+    } catch (e: IllegalArgumentException) {
         null
     }
 

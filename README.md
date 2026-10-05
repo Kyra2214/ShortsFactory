@@ -13,7 +13,7 @@ A análise é agendada como trabalho único por projeto. Seu estado persistente 
 | Módulo | Responsabilidade |
 | --- | --- |
 | `app` | Activity, composição Hilt, workers do WorkManager e navegação Compose |
-| `core` | Armazenamento seguro das chaves e extração dos binários de mídia |
+| `core` | Armazenamento seguro das chaves |
 | `domain` | Modelos, contratos, validação de mídia e pipeline independente de Android |
 | `data` | Room versão 3, migrações, DAOs, repositórios, importação e transcrição |
 | `video-engine` | FFmpeg/ffprobe local, extração/divisão de áudio, filtros e tracking facial |
@@ -39,7 +39,7 @@ A API aceita arquivos de até 25 MB. Para arquivos maiores, o app extrai o áudi
 
 Antes da análise, o app valida existência e tamanho do arquivo, duração, dimensões, presença de vídeo e presença de áudio quando a transcrição é necessária. O processamento usa FFmpeg/ffprobe local, com verificações de intervalo, resolução e FPS.
 
-O `FfmpegVideoEngine` extrai frames em intervalos de um segundo e usa ML Kit Face Detection para selecionar o maior rosto detectado. O bounding box é normalizado, suavizado temporalmente e aplicado à expressão de crop vertical; quando não há rosto confiável, o pipeline usa um foco central seguro. O engine mantém referência ao processo FFmpeg e destrói o processo em cancelamento ou timeout para evitar tarefas órfãs.
+O `FfmpegVideoEngine` extrai frames em intervalos de um segundo e usa ML Kit Face Detection para selecionar o maior rosto detectado. O bounding box é normalizado, suavizado temporalmente e aplicado à expressão de crop vertical; quando não há rosto confiável, o pipeline usa um foco central seguro. As legendas são renderizadas como PNG transparente (o binário embutido não tem `drawtext`/libass) e aplicadas com `overlay` em tempo relativo ao clipe; a cadeia de filtros é montada por `FfmpegFilterBuilder` no módulo `domain`. O engine mantém referência ao processo FFmpeg e destrói o processo em cancelamento ou timeout para evitar tarefas órfãs.
 
 ## Execução em segundo plano
 
@@ -49,7 +49,7 @@ A exportação reaproveita um resultado concluído quando a combinação de proj
 
 ## Requisitos e configuração local
 
-Para compilar, use JDK 17, Android SDK com a plataforma 35, Build Tools 35.0.0 e o Gradle Wrapper. O app suporta Android API 26 ou superior e o workflow de CI usa um emulador API 35. Os binários `ffmpeg` e `ffprobe` necessários para o processamento local permanecem em `app/src/main/assets`.
+Para compilar, use JDK 17, Android SDK com a plataforma 35, Build Tools 35.0.0 e o Gradle Wrapper. O app suporta Android API 26 ou superior e o workflow de CI usa um emulador API 35. Os binários `ffmpeg` e `ffprobe` (arm64-v8a) ficam em `app/src/main/jniLibs/arm64-v8a/libffmpeg.so` e `libffprobe.so` e são executados de `applicationInfo.nativeLibraryDir` (`useLegacyPackaging = true`).
 
 Crie `local.properties` apontando para o SDK local, por exemplo `sdk.dir=/caminho/para/Android/Sdk`, e não versione esse arquivo. Chaves de IA devem ser inseridas somente dentro do app ou fornecidas por um mecanismo seguro de distribuição; nunca coloque credenciais reais no código, nos testes ou no Git.
 

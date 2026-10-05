@@ -103,7 +103,7 @@ class OpenAiTranscriptionService @Inject constructor(
             .addFormDataPart(
                 "file",
                 audioFile.name,
-                audioFile.asRequestBody("audio/mpeg".toMediaType())
+                audioFile.asRequestBody("audio/mp4".toMediaType())
             )
             .build()
 
