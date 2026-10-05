@@ -47,7 +47,7 @@ class ShortsProcessingManager @Inject constructor(
         if (candidates.isEmpty()) return
 
         val platformKeys = platforms.filter { key -> ExportPlatform.entries.any { it.key == key } }
-            .ifEmpty { listOf("shorts") }
+            .ifEmpty { listOf(ExportPlatform.YOUTUBE.key) }
         val platformKey = platformKeys.joinToString(",")
         val selectedQuality = ExportQuality.entries.firstOrNull {
             it.label == quality || it.name.equals(quality, ignoreCase = true)
