@@ -7,6 +7,7 @@ import com.shortsfactory.data.repository.ExportRepository
 import com.shortsfactory.data.repository.ProjectRepository
 import com.shortsfactory.data.repository.ShortRepository
 import com.shortsfactory.data.repository.SubtitleRepository
+import com.shortsfactory.data.repository.TranscriptRepository
 import com.shortsfactory.domain.model.BatchExportProgress
 import com.shortsfactory.domain.model.ExportPlatform
 import com.shortsfactory.domain.model.ExportQuality
@@ -25,6 +26,7 @@ class ShortsProcessingManager @Inject constructor(
     private val projectRepository: ProjectRepository,
     private val shortRepository: ShortRepository,
     private val subtitleRepository: SubtitleRepository,
+    private val transcriptRepository: TranscriptRepository,
     private val exportRepository: ExportRepository,
     private val application: Context
 ) {
@@ -115,7 +117,21 @@ class ShortsProcessingManager @Inject constructor(
             shortRepository.updateExportProgress(candidate.id, "processing", 0f)
 
             try {
-                val subtitles = subtitleRepository.getSegments(candidate.id)
+                val subtitles = subtitleRepository.getSegments(candidate.id).ifEmpty {
+                    transcriptRepository.get(projectId)?.segments
+                        ?.asSequence()
+                        ?.filter { it.endMs > candidate.startMs && it.startMs < candidate.endMs }
+                        ?.map { segment ->
+                            com.shortsfactory.domain.model.SubtitleSegment(
+                                startMs = maxOf(segment.startMs, candidate.startMs),
+                                endMs = minOf(segment.endMs, candidate.endMs),
+                                words = segment.text.trim().split(Regex("\\s+")).filter(String::isNotBlank)
+                            )
+                        }
+                        ?.filter { it.endMs > it.startMs && it.words.isNotEmpty() }
+                        ?.toList()
+                        .orEmpty()
+                }
                 val style = resolveSubtitleStyle("creator")
                 val focusTrack = runCatching {
                     videoEngine.detectFocusTrack(project.videoUri, candidate.startMs, candidate.endMs)
