@@ -226,10 +226,10 @@ class FfmpegVideoEngine constructor(private val appContext: Context) : VideoEngi
         }
         val cropHeightExpr = "min(ih\\,iw*$targetHeight/$targetWidth)"
         val cropWidthExpr = "min(iw\\,ih*$targetWidth/$targetHeight)"
-        val yExpr = "ih/2-$cropHeightExpr/2"
         val durationSec = durationMs / 1000.0
         val points = track.points
-        val xExpr = buildInterpolatedXExpression(points, durationSec, cropWidthExpr)
+        val xExpr = buildInterpolatedXExpression(points, durationSec, cropWidthExpr, horizontal = true)
+        val yExpr = buildInterpolatedYExpression(points, durationSec, cropHeightExpr)
         return Pair(
             "crop=$cropWidthExpr:$cropHeightExpr:$xExpr:$yExpr",
             "scale=$targetWidth:$targetHeight"
@@ -239,11 +239,13 @@ class FfmpegVideoEngine constructor(private val appContext: Context) : VideoEngi
     private fun buildInterpolatedXExpression(
         points: List<FocusPoint>,
         durationSec: Double,
-        cropWidthExpr: String
+        cropSizeExpr: String,
+        horizontal: Boolean = true
     ): String {
         if (points.size <= 1) {
-            val cx = points.firstOrNull()?.centerX ?: 0.5f
-            return "(iw-$cropWidthExpr)*$cx"
+            val center = if (horizontal) points.firstOrNull()?.centerX ?: 0.5f else points.firstOrNull()?.centerY ?: 0.5f
+            val axis = if (horizontal) "iw" else "ih"
+            return "($axis-$cropSizeExpr)*$center"
         }
         val lastT = points.last().timeMs / 1000.0
         val normalized = if (lastT > 0) points.map {
@@ -253,7 +255,8 @@ class FfmpegVideoEngine constructor(private val appContext: Context) : VideoEngi
             ((i * durationSec / maxOf(1, normalized.size - 1))) to p.centerX
         }
         if (anchors.size == 1) return "(iw-$cropWidthExpr)*${anchors[0].second}"
-        val expr = StringBuilder("(iw-$cropWidthExpr)*")
+        val axis = if (horizontal) "iw" else "ih"
+        val expr = StringBuilder("($axis-$cropSizeExpr)*")
         val (t0, c0) = anchors[0]
         val (t1, c1) = anchors[1]
         expr.append("if(lt(t\\,$t1)\\,$c0\\,")
@@ -268,6 +271,9 @@ class FfmpegVideoEngine constructor(private val appContext: Context) : VideoEngi
         expr.append(")")
         return expr.toString()
     }
+
+    private fun buildInterpolatedYExpression(points: List<FocusPoint>, durationSec: Double, cropHeightExpr: String): String =
+        buildInterpolatedXExpression(points, durationSec, cropHeightExpr, horizontal = false)
 
     private fun buildSubtitleDraw(segments: List<SubtitleSegment>, style: SubtitleStyleConfig): String {
         val drawtexts = segments.map { seg ->
