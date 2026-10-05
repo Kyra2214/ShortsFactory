@@ -39,8 +39,10 @@ As execuções anteriores do PR terminaram como canceladas antes de iniciar qual
 
 - [Run 37380784369](https://github.com/Kyra2214/ShortsFactory/actions/runs/37380784369) — testes JVM, lint e builds debug/release/Android test **passaram**. A execução ficou vermelha somente porque `actions/upload-artifact@v4` não conseguiu criar o artefato: a quota de armazenamento do GitHub Actions estava esgotada. Como o job principal depende do upload, o teste instrumentado foi ignorado.
 - Correção aplicada ao workflow: os uploads de relatórios/APKs são auxiliares e agora usam `continue-on-error: true`, tanto no job principal quanto no instrumentado. Assim, a quota não mascara nem interrompe os gates de compilação/teste; os relatórios podem não ser armazenados enquanto a quota estiver cheia.
+- [Run 37382745467](https://github.com/Kyra2214/ShortsFactory/actions/runs/37382745467) — job principal **passou** (JVM, lint e APKs). O job instrumentado não chegou a executar testes: o emulador falhou ao criar a partição userdata por espaço do runner (`7085.39 MB` disponíveis, `7372.80 MB` exigidos). Isso é uma limitação do disco do runner, não uma falha da migração Room.
+- Correção aplicada: definir `disk-size: 6G` no AVD API 35, suficiente para os testes Room e abaixo do espaço livre observado. Essa entrada é suportada pelo [android-emulator-runner](https://github.com/ReactiveCircus/android-emulator-runner#configurations); reduzir para `6G` também é o workaround relatado em [android-emulator-runner#455](https://github.com/ReactiveCircus/android-emulator-runner/issues/455).
 
-**Nova validação após tornar o upload não bloqueante:** pendente; será registrada após o workflow atualizado concluir.
+**Nova validação após tornar o upload não bloqueante e reduzir a partição do AVD:** pendente; será registrada após o workflow atualizado concluir.
 
 ## Limites e pendências
 
