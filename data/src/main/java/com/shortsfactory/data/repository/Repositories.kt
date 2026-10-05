@@ -149,8 +149,8 @@ class AIAnalysisRepository(private val dao: AIAnalysisDao) {
     private data class PersistedAnalysis(
         val title: String,
         val summary: String,
-        val suggestedDurationMs: Long?,
-        val candidates: List<PersistedCandidate>
+        val suggestedDurationMs: Long? = null,
+        val candidates: List<PersistedCandidate> = emptyList()
     ) {
         fun toDomain() = AIAnalysisResult(
             title = title,
