@@ -252,13 +252,17 @@ class FfmpegVideoEngine constructor(private val appContext: Context) : VideoEngi
             it.copy(timeMs = (it.timeMs / 1000.0 / lastT * durationSec).toLong())
         } else points
         val anchors = normalized.mapIndexed { i, p ->
-            ((i * durationSec / maxOf(1, normalized.size - 1))) to p.centerX
+            val center = if (horizontal) p.centerX else p.centerY
+            ((i * durationSec / maxOf(1, normalized.size - 1))) to center
         }
-        if (anchors.size == 1) return "(iw-$cropWidthExpr)*${anchors[0].second}"
+        if (anchors.size == 1) {
+            val axis = if (horizontal) "iw" else "ih"
+            return "($axis-$cropSizeExpr)*${anchors[0].second}"
+        }
         val axis = if (horizontal) "iw" else "ih"
         val expr = StringBuilder("($axis-$cropSizeExpr)*")
-        val (t0, c0) = anchors[0]
-        val (t1, c1) = anchors[1]
+        val (_, c0) = anchors[0]
+        val (_, c1) = anchors[1]
         expr.append("if(lt(t\\,$t1)\\,$c0\\,")
         for (i in 1 until anchors.size - 1) {
             val (a0, b0) = anchors[i]
