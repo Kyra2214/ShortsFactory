@@ -126,32 +126,105 @@ class TranscriptRepository(private val dao: TranscriptDao) {
 }
 
 class AIAnalysisRepository(private val dao: AIAnalysisDao) {
-    private val json = Json { encodeDefaults = true }
+    private val json = Json { encodeDefaults = true; ignoreUnknownKeys = true }
 
     suspend fun save(projectId: Long, provider: String, result: AIAnalysisResult) {
         dao.insert(
             AIAnalysisEntity(
                 projectId = projectId,
                 provider = provider,
-                json = json.encodeToString(
-                    PersistedAnalysis.serializer(),
-                    PersistedAnalysis(
-                        title = result.title,
-                        summary = result.summary,
-                        candidateCount = result.candidates.size,
-                        suggestedDurationMs = result.suggestedDurationMs
-                    )
-                )
+                json = json.encodeToString(PersistedAnalysis.serializer(), result.toPersisted())
             )
         )
+    }
+
+    suspend fun get(projectId: Long): AIAnalysisResult? {
+        val entity = dao.getByProject(projectId) ?: return null
+        return runCatching {
+            json.decodeFromString(PersistedAnalysis.serializer(), entity.json).toDomain()
+        }.getOrNull()
     }
 
     @Serializable
     private data class PersistedAnalysis(
         val title: String,
         val summary: String,
-        val candidateCount: Int,
-        val suggestedDurationMs: Long?
+        val suggestedDurationMs: Long?,
+        val candidates: List<PersistedCandidate>
+    ) {
+        fun toDomain() = AIAnalysisResult(
+            title = title,
+            summary = summary,
+            candidates = candidates.map { it.toDomain() },
+            suggestedDurationMs = suggestedDurationMs
+        )
+    }
+
+    @Serializable
+    private data class PersistedCandidate(
+        val score: Float,
+        val startMs: Long,
+        val endMs: Long,
+        val title: String,
+        val hook: String,
+        val topic: String,
+        val reason: String,
+        val subtitles: List<PersistedSubtitle>,
+        val focusTrack: PersistedFocusTrack?
+    ) {
+        fun toDomain() = ShortCandidate(
+            score, startMs, endMs, title, hook, topic, reason,
+            focusTrack?.toDomain(),
+            subtitles.map { SubtitleSegment(it.startMs, it.endMs, it.words) }
+        )
+    }
+
+    @Serializable
+    private data class PersistedSubtitle(val startMs: Long, val endMs: Long, val words: List<String>)
+
+    @Serializable
+    private data class PersistedFocusTrack(
+        val method: String,
+        val points: List<PersistedFocusPoint>
+    ) {
+        fun toDomain() = com.shortsfactory.domain.pipeline.FocusTrack(
+            points.map { com.shortsfactory.domain.pipeline.FocusPoint(it.timeMs, it.centerX, it.centerY, it.width, it.height) },
+            runCatching { com.shortsfactory.domain.pipeline.TrackingMethod.valueOf(method) }
+                .getOrDefault(com.shortsfactory.domain.pipeline.TrackingMethod.STATIC_CENTER)
+        )
+    }
+
+    @Serializable
+    private data class PersistedFocusPoint(
+        val timeMs: Long,
+        val centerX: Float,
+        val centerY: Float,
+        val width: Float,
+        val height: Float
+    )
+
+    private fun AIAnalysisResult.toPersisted() = PersistedAnalysis(
+        title = title,
+        summary = summary,
+        suggestedDurationMs = suggestedDurationMs,
+        candidates = candidates.map { candidate ->
+            PersistedCandidate(
+                candidate.score,
+                candidate.startMs,
+                candidate.endMs,
+                candidate.title,
+                candidate.hook,
+                candidate.topic,
+                candidate.reason,
+                candidate.subtitles.map { PersistedSubtitle(it.startMs, it.endMs, it.words) },
+                candidate.focusTrack?.let { track ->
+                    PersistedFocusTrack(
+                        track.method.name,
+                        track.points.map { PersistedFocusPoint(it.timeMs, it.centerX, it.centerY, it.width, it.height) }
+                    )
+                }
+            )
+        }
     )
 }
 
