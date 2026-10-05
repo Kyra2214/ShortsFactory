@@ -75,7 +75,8 @@ class MediaAnalysisPipeline(
     private val aiProvider: AIProvider,
     private val candidateSelector: CandidateSelector,
     private val audioExtractor: AudioExtractorService,
-    private val transcription: TranscriptionService
+    private val transcription: TranscriptionService,
+    private val videoEngine: VideoEngine? = null
 ) {
 
     suspend fun analyze(
@@ -92,8 +93,13 @@ class MediaAnalysisPipeline(
             onStageUpdate(StageProgress(stage, state, progress, message))
         }
 
-        val audioPath = videoPath.replaceLast("video", "audio") + ".mp3"
         try {
+            currentStage = PipelineStage.VideoInput
+            update(currentStage, StageState.PROCESSING)
+            val input = validateInput(videoPath)
+            update(currentStage, StageState.COMPLETED, 1f, input.width.toString() + "x" + input.height + ", " + input.durationMs + "ms")
+
+            val audioPath = videoPath.replaceLast("video", "audio") + ".mp3"
             currentStage = PipelineStage.AudioExtraction
             update(currentStage, StageState.PROCESSING)
             audioExtractor.extract(videoPath, audioPath)
@@ -116,13 +122,22 @@ class MediaAnalysisPipeline(
 
             currentStage = PipelineStage.SubtitleGeneration
             update(currentStage, StageState.PROCESSING)
-            update(currentStage, StageState.COMPLETED, 1f)
+            val withSubtitles = selected.map { candidate ->
+                candidate.copy(subtitles = buildSubtitles(candidate, transcript))
+            }
+            update(currentStage, StageState.COMPLETED, 1f, withSubtitles.sumOf { it.subtitles.size }.toString() + " segmentos")
 
             currentStage = PipelineStage.FocusTracking
             update(currentStage, StageState.PROCESSING)
-            update(currentStage, StageState.COMPLETED, 1f)
+            val withFocus = withSubtitles.map { candidate ->
+                candidate.copy(
+                    focusTrack = videoEngine?.detectFocusTrack(videoPath, candidate.startMs, candidate.endMs)
+                        ?: staticCenterTrack(candidate)
+                )
+            }
+            update(currentStage, StageState.COMPLETED, 1f, withFocus.size.toString() + " trilhas")
 
-            return AnalysisOutcome.Success(transcript, result, selected)
+            return AnalysisOutcome.Success(transcript, result.copy(candidates = withFocus), withFocus)
         } catch (ce: CancellationException) {
             currentStage?.let { update(it, StageState.CANCELLED, message = "Análise cancelada.") }
             return AnalysisOutcome.Cancelled
@@ -131,6 +146,29 @@ class MediaAnalysisPipeline(
             currentStage?.let { update(it, StageState.FAILED, message = message) }
             return AnalysisOutcome.Failed("Falha em ${currentStage?.label ?: "etapa desconhecida"}: $message")
         }
+    }
+
+    private fun validateInput(videoPath: String): InputVideoInfo {
+        require(videoPath.isNotBlank()) { "O caminho do vídeo está vazio." }
+        val file = java.io.File(videoPath)
+        require(file.exists() && file.isFile) { "Vídeo de entrada não encontrado: " + videoPath }
+        val engine = videoEngine
+        return engine?.probe(videoPath) ?: InputVideoInfo(videoPath, 0L, 0, 0, 0.0, true)
+    }
+
+    private fun buildSubtitles(candidate: ShortCandidate, transcript: Transcript): List<SubtitleSegment> {
+        return transcript.segments.asSequence()
+            .filter { it.endMs > candidate.startMs && it.startMs < candidate.endMs }
+            .map { SubtitleSegment(maxOf(it.startMs, candidate.startMs), minOf(it.endMs, candidate.endMs), it.text.trim().split(Regex("\\s+")).filter(String::isNotBlank)) }
+            .filter { it.endMs > it.startMs && it.words.isNotEmpty() }
+            .toList()
+    }
+
+    private fun staticCenterTrack(candidate: ShortCandidate): FocusTrack {
+        val duration = (candidate.endMs - candidate.startMs).coerceAtLeast(1L)
+        val points = listOf(candidate.startMs, candidate.startMs + duration / 2, candidate.endMs).distinct()
+            .map { time -> FocusPoint(time, 0.5f, 0.5f, 1f, 1f) }
+        return FocusTrack(points, TrackingMethod.STATIC_CENTER)
     }
 }
 
