@@ -277,7 +277,7 @@ class FfmpegVideoEngine constructor(private val appContext: Context) : VideoEngi
             val start = ((seg.startMs - clipStartMs).coerceAtLeast(0L) / 1000.0).coerceAtMost(clipDurationMs / 1000.0)
             val end = ((seg.endMs - clipStartMs).coerceAtLeast(0L) / 1000.0).coerceAtMost(clipDurationMs / 1000.0)
             val size = style.fontSizePx
-            val y = "(h*${style.positionPercent}/100)-n*${size / 8}"
+            val y = "h*${style.positionPercent}/100"
             val color = "white@0.95"
             val border = if (style.styleKey == "minimal") "0" else "2"
             "drawtext=text='$text':x=(w-text_w)/2:y=$y:fontsize=$size:fontcolor=$color:borderw=$border:bordercolor=black@0.8:enable='between(t\\,$start\\,$end)'"
