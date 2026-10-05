@@ -69,9 +69,15 @@ class EditorViewModel @Inject constructor(
         start: Long,
         end: Long
     ) {
-        val normalizedStart = start.coerceAtLeast(0L)
-        val normalizedEnd = end.coerceAtLeast(normalizedStart + 1L)
         viewModelScope.launch {
+            val duration = _videoDurationMs.value
+            val maxStart = if (duration > 1L) duration - 1L else Long.MAX_VALUE
+            val normalizedStart = start.coerceIn(0L, maxStart)
+            val normalizedEnd = if (duration > 0L) {
+                end.coerceIn(normalizedStart + 1L, duration)
+            } else {
+                end.coerceAtLeast(normalizedStart + 1L)
+            }
             runCatching {
                 shortRepository.updateMetadata(
                     id = shortId,
