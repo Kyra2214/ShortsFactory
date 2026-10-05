@@ -143,10 +143,7 @@ class MediaAnalysisPipeline(
             update(currentStage, StageState.COMPLETED, 1f, withFocus.size.toString() + " trilhas")
 
             return AnalysisOutcome.Success(transcript, result.copy(candidates = withFocus), withFocus)
-        } finally {
-            File(videoPath + ".analysis.mp3").delete()
-        }
-                } catch (ce: CancellationException) {
+        } catch (ce: CancellationException) {
             currentStage?.let { failed ->
                 update(failed, StageState.CANCELLED, message = "Análise cancelada.")
                 cancelPendingStages(failed, update)
@@ -159,6 +156,8 @@ class MediaAnalysisPipeline(
                 cancelPendingStages(failed, update, "Ignorada porque uma etapa anterior falhou.")
             }
             return AnalysisOutcome.Failed("Falha em ${currentStage?.label ?: "etapa desconhecida"}: $message")
+        } finally {
+            File(videoPath + ".analysis.mp3").delete()
         }
     }
 
