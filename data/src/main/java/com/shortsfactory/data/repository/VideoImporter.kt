@@ -38,14 +38,25 @@ class VideoImporter(private val appContext: Context) {
                 .header("Accept", "video/*,application/octet-stream;q=0.9,*/*;q=0.1")
             if (offset > 0L) requestBuilder.header("Range", "bytes=" + offset + "-")
 
-            val response = client.newCall(requestBuilder.build()).execute()
-            val body = response.body ?: return@withContext ImportResult.Failure("Resposta vazia da fonte.")
-            if (!response.isSuccessful && response.code != 206) return@withContext ImportResult.Failure("A fonte não permitiu o acesso (" + response.code + "). O aplicativo não contorna proteções de download.")
-            val contentType = body.contentType()?.toString()?.lowercase()
-            if (contentType != null && contentType.contains("text/html")) return@withContext ImportResult.Failure("A URL retornou uma página HTML, não um arquivo de vídeo.")
+            client.newCall(requestBuilder.build()).execute().use { response ->
+                val body = response.body ?: return@withContext ImportResult.Failure("Resposta vazia da fonte.")
+                if (!response.isSuccessful && response.code != 206) return@withContext ImportResult.Failure("A fonte não permitiu o acesso (" + response.code + "). O aplicativo não contorna proteções de download.")
+                val contentType = body.contentType()?.toString()?.lowercase()
+                if (contentType != null && contentType.contains("text/html")) return@withContext ImportResult.Failure("A URL retornou uma página HTML, não um arquivo de vídeo.")
 
-            val append = offset > 0L && response.code == 206
-            if (!append) { offset = 0L; partialFile.delete() }
+                val append = offset > 0L && response.code == 206
+                if (append) {
+                    val rangeStart = response.header("Content-Range")
+                        ?.substringAfter("bytes ", "")
+                        ?.substringBefore("-", "")
+                        ?.toLongOrNull()
+                    if (rangeStart != offset) {
+                        return@withContext ImportResult.Failure("A fonte retornou um intervalo HTTP incompatível com o download parcial.")
+                    }
+                } else {
+                    offset = 0L
+                    partialFile.delete()
+                }
             val maxBytes = MAX_IMPORT_BYTES
             val expectedLength = body.contentLength().takeIf { it >= 0L } ?: -1L
             if (expectedLength >= 0L && offset + expectedLength > maxBytes) return@withContext ImportResult.Failure("O vídeo excede o limite local.")
@@ -64,10 +75,11 @@ class VideoImporter(private val appContext: Context) {
                     }
                 }
             }
-            if (!partialFile.isFile || partialFile.length() == 0L) return@withContext ImportResult.Failure("O arquivo baixado está vazio.")
-            partialFile.copyTo(finalFile, overwrite = true)
-            partialFile.delete()
-            ImportResult.Success(finalFile.absolutePath)
+                if (!partialFile.isFile || partialFile.length() == 0L) return@withContext ImportResult.Failure("O arquivo baixado está vazio.")
+                partialFile.copyTo(finalFile, overwrite = true)
+                partialFile.delete()
+                ImportResult.Success(finalFile.absolutePath)
+            }
         } catch (e: Exception) {
             Log.w(TAG, "Falha ao baixar vídeo", e)
             ImportResult.Failure("Falha ao baixar: ${e.message}")
