@@ -9,6 +9,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.io.FileOutputStream
+import java.io.RandomAccessFile
 
 /** Importa vídeos a partir de arquivo local ou URL com autorização do usuário. */
 class VideoImporter(private val appContext: Context) {
@@ -26,20 +27,46 @@ class VideoImporter(private val appContext: Context) {
      */
     suspend fun downloadFromUrl(url: String): ImportResult = withContext(Dispatchers.IO) {
         try {
-            val request = Request.Builder().url(url).build()
-            val response = client.newCall(request).execute()
-            if (!response.isSuccessful) {
-                return@withContext ImportResult.Failure(
-                    "A fonte não permitiu o acesso (${response.code}). O aplicativo não contorna proteções de download."
-                )
-            }
+            require(url.startsWith("http://") || url.startsWith("https://")) { "URL de vídeo inválida." }
+            val extensionHint = guessExtension(url, null)
+            val finalFile = File(appContext.filesDir, "video_" + System.currentTimeMillis() + "." + extensionHint)
+            val partialFile = File(appContext.cacheDir, finalFile.name + ".part")
+            var offset = if (partialFile.isFile) partialFile.length() else 0L
+
+            val requestBuilder = Request.Builder().url(url)
+                .header("Accept", "video/*,application/octet-stream;q=0.9,*/*;q=0.1")
+            if (offset > 0L) requestBuilder.header("Range", "bytes=" + offset + "-")
+
+            val response = client.newCall(requestBuilder.build()).execute()
             val body = response.body ?: return@withContext ImportResult.Failure("Resposta vazia da fonte.")
-            val extension = guessExtension(url, body.contentType()?.toString())
-            val outputFile = File(appContext.filesDir, "video_${System.currentTimeMillis()}.$extension")
+            if (!response.isSuccessful && response.code != 206) return@withContext ImportResult.Failure("A fonte não permitiu o acesso (" + response.code + "). O aplicativo não contorna proteções de download.")
+            val contentType = body.contentType()?.toString()?.lowercase()
+            if (contentType != null && contentType.contains("text/html")) return@withContext ImportResult.Failure("A URL retornou uma página HTML, não um arquivo de vídeo.")
+
+            val append = offset > 0L && response.code == 206
+            if (!append) { offset = 0L; partialFile.delete() }
+            val maxBytes = MAX_IMPORT_BYTES
+            val expectedLength = body.contentLength().takeIf { it >= 0L } ?: -1L
+            if (expectedLength >= 0L && offset + expectedLength > maxBytes) return@withContext ImportResult.Failure("O vídeo excede o limite local.")
+
             body.byteStream().use { input ->
-                FileOutputStream(outputFile).use { output -> input.copyTo(output) }
+                RandomAccessFile(partialFile, "rw").use { output ->
+                    output.seek(offset)
+                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                    var total = offset
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read < 0) break
+                        total += read
+                        if (total > maxBytes) { partialFile.delete(); return@withContext ImportResult.Failure("O vídeo excede o limite local.") }
+                        output.write(buffer, 0, read)
+                    }
+                }
             }
-            ImportResult.Success(outputFile.absolutePath)
+            if (!partialFile.isFile || partialFile.length() == 0L) return@withContext ImportResult.Failure("O arquivo baixado está vazio.")
+            partialFile.copyTo(finalFile, overwrite = true)
+            partialFile.delete()
+            ImportResult.Success(finalFile.absolutePath)
         } catch (e: Exception) {
             Log.w(TAG, "Falha ao baixar vídeo", e)
             ImportResult.Failure("Falha ao baixar: ${e.message}")
@@ -73,6 +100,7 @@ class VideoImporter(private val appContext: Context) {
 
     companion object {
         private const val TAG = "VideoImporter"
+        private const val MAX_IMPORT_BYTES = 8L * 1024L * 1024L * 1024L
         private val VIDEO_EXTENSIONS = listOf("mp4", "webm", "mov", "mkv", "avi", "m4v")
     }
 }

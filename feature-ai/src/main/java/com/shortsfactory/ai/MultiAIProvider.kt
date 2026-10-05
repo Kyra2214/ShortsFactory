@@ -39,7 +39,7 @@ class MultiAIProvider(
         providers.forEach { provider ->
             try {
                 return operation(provider)
-            } catch (error: Throwable) {
+            } catch (error: Exception) {
                 if (error is kotlinx.coroutines.CancellationException) throw error
                 lastError = error
             }

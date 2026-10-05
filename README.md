@@ -74,9 +74,9 @@ Os testes automatizados não fazem chamadas ao Grok ou à OpenAI. Testes com FFm
 
 ## Integração contínua
 
-O workflow `.github/workflows/ci.yml` executa em pushes para `main`/`master` e em pull requests. O job principal configura JDK 17 e Android SDK 35, valida o Gradle Wrapper, executa testes JVM, lint e builds debug/release, e publica relatórios e APKs como artefatos mesmo quando uma etapa falha.
+O workflow `.github/workflows/ci.yml` executa em pushes para `main`/`master` e em pull requests. O job principal configura JDK 17, usa o Android SDK disponível no runner, valida o Gradle Wrapper, executa testes JVM, lint e builds debug/release, e publica relatórios e APKs como artefatos mesmo quando uma etapa falha.
 
-O segundo job inicializa um emulador API 35 e executa `connectedCheck`, incluindo o teste de migração Room. Há também dependency review em pull requests. A concorrência cancela uma execução antiga da mesma referência quando uma nova alteração é enviada.
+O segundo job inicializa um emulador API 35 e executa `connectedCheck`, incluindo o teste de migração Room. A antiga etapa de dependency review foi removida porque o repositório privado não tem GitHub Advanced Security/Dependency Graph habilitado; ela não deve ser tratada como um gate executável. A concorrência cancela uma execução antiga da mesma referência quando uma nova alteração é enviada.
 
 A CI não recebe nem exige chaves de IA. A publicação automática em lojas, autenticação OAuth de provedores externos e distribuição de segredos de produção não fazem parte deste repositório; devem ser adicionadas posteriormente em um ambiente de release seguro.
 

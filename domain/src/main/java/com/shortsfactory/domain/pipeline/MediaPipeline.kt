@@ -75,7 +75,9 @@ class MediaAnalysisPipeline(
     private val aiProvider: AIProvider,
     private val candidateSelector: CandidateSelector,
     private val audioExtractor: AudioExtractorService,
-    private val transcription: TranscriptionService
+    private val transcription: TranscriptionService,
+    private val videoEngine: VideoEngine? = null,
+    private val candidateScorer: CandidateScorer = CandidateScorer()
 ) {
 
     suspend fun analyze(
@@ -92,8 +94,13 @@ class MediaAnalysisPipeline(
             onStageUpdate(StageProgress(stage, state, progress, message))
         }
 
-        val audioPath = videoPath.replaceLast("video", "audio") + ".mp3"
         try {
+            currentStage = PipelineStage.VideoInput
+            update(currentStage, StageState.PROCESSING)
+            val input = validateInput(videoPath)
+            update(currentStage, StageState.COMPLETED, 1f, input.width.toString() + "x" + input.height + ", " + input.durationMs + "ms")
+
+            val audioPath = videoPath.replaceLast("video", "audio") + ".mp3"
             currentStage = PipelineStage.AudioExtraction
             update(currentStage, StageState.PROCESSING)
             audioExtractor.extract(videoPath, audioPath)
@@ -111,26 +118,87 @@ class MediaAnalysisPipeline(
 
             currentStage = PipelineStage.CandidateSelection
             update(currentStage, StageState.PROCESSING)
-            val selected = candidateSelector.select(result.candidates, config)
+            val rescored = result.candidates.map { candidate ->
+                candidateScorer.score(candidate, transcript, maxDurationForPreset(config.preset))
+            }
+            val selected = candidateSelector.select(rescored, config)
             update(currentStage, StageState.COMPLETED, 1f)
 
             currentStage = PipelineStage.SubtitleGeneration
             update(currentStage, StageState.PROCESSING)
-            update(currentStage, StageState.COMPLETED, 1f)
+            val withSubtitles = selected.map { candidate ->
+                candidate.copy(subtitles = buildSubtitles(candidate, transcript))
+            }
+            update(currentStage, StageState.COMPLETED, 1f, withSubtitles.sumOf { it.subtitles.size }.toString() + " segmentos")
 
             currentStage = PipelineStage.FocusTracking
             update(currentStage, StageState.PROCESSING)
-            update(currentStage, StageState.COMPLETED, 1f)
+            val withFocus = withSubtitles.map { candidate ->
+                candidate.copy(
+                    focusTrack = videoEngine?.detectFocusTrack(videoPath, candidate.startMs, candidate.endMs)
+                        ?: staticCenterTrack(candidate)
+                )
+            }
+            update(currentStage, StageState.COMPLETED, 1f, withFocus.size.toString() + " trilhas")
 
-            return AnalysisOutcome.Success(transcript, result, selected)
+            return AnalysisOutcome.Success(transcript, result.copy(candidates = withFocus), withFocus)
         } catch (ce: CancellationException) {
-            currentStage?.let { update(it, StageState.CANCELLED, message = "Análise cancelada.") }
+            currentStage?.let { failed ->
+                update(failed, StageState.CANCELLED, message = "Análise cancelada.")
+                cancelPendingStages(failed, update)
+            }
             return AnalysisOutcome.Cancelled
         } catch (e: Exception) {
             val message = e.message ?: "Erro desconhecido"
-            currentStage?.let { update(it, StageState.FAILED, message = message) }
+            currentStage?.let { failed ->
+                update(failed, StageState.FAILED, message = message)
+                cancelPendingStages(failed, update, "Ignorada porque uma etapa anterior falhou.")
+            }
             return AnalysisOutcome.Failed("Falha em ${currentStage?.label ?: "etapa desconhecida"}: $message")
         }
+    }
+
+    private fun maxDurationForPreset(preset: String): Long? = when (preset) {
+        "15s" -> DurationPreset.FifteenSeconds.maxMs
+        "30s" -> DurationPreset.ThirtySeconds.maxMs
+        "45s" -> DurationPreset.FortyFiveSeconds.maxMs
+        "60s" -> DurationPreset.SixtySeconds.maxMs
+        "90s" -> DurationPreset.NinetySeconds.maxMs
+        else -> null
+    }
+
+    private suspend fun cancelPendingStages(
+        failedStage: PipelineStage,
+        update: suspend (PipelineStage, StageState, Float, String?) -> Unit,
+        message: String = "Ignorada porque a análise foi cancelada."
+    ) {
+        val index = PipelineStage.values().indexOf(failedStage)
+        PipelineStage.values().drop(index + 1).forEach { stage ->
+            update(stage, StageState.CANCELLED, 0f, message)
+        }
+    }
+
+    private fun validateInput(videoPath: String): InputVideoInfo {
+        require(videoPath.isNotBlank()) { "O caminho do vídeo está vazio." }
+        val file = java.io.File(videoPath)
+        require(file.exists() && file.isFile) { "Vídeo de entrada não encontrado: " + videoPath }
+        val engine = videoEngine
+        return engine?.probe(videoPath) ?: InputVideoInfo(videoPath, 0L, 0, 0, 0.0, true)
+    }
+
+    private fun buildSubtitles(candidate: ShortCandidate, transcript: Transcript): List<SubtitleSegment> {
+        return transcript.segments.asSequence()
+            .filter { it.endMs > candidate.startMs && it.startMs < candidate.endMs }
+            .map { SubtitleSegment(maxOf(it.startMs, candidate.startMs), minOf(it.endMs, candidate.endMs), it.text.trim().split(Regex("\\s+")).filter(String::isNotBlank)) }
+            .filter { it.endMs > it.startMs && it.words.isNotEmpty() }
+            .toList()
+    }
+
+    private fun staticCenterTrack(candidate: ShortCandidate): FocusTrack {
+        val duration = (candidate.endMs - candidate.startMs).coerceAtLeast(1L)
+        val points = listOf(candidate.startMs, candidate.startMs + duration / 2, candidate.endMs).distinct()
+            .map { time -> FocusPoint(time, 0.5f, 0.5f, 1f, 1f) }
+        return FocusTrack(points, TrackingMethod.STATIC_CENTER)
     }
 }
 

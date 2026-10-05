@@ -7,6 +7,7 @@ import com.shortsfactory.data.repository.ExportRepository
 import com.shortsfactory.data.repository.ProjectRepository
 import com.shortsfactory.data.repository.ShortRepository
 import com.shortsfactory.data.repository.SubtitleRepository
+import com.shortsfactory.data.repository.TranscriptRepository
 import com.shortsfactory.domain.model.BatchExportProgress
 import com.shortsfactory.domain.model.ExportPlatform
 import com.shortsfactory.domain.model.ExportQuality
@@ -25,6 +26,7 @@ class ShortsProcessingManager @Inject constructor(
     private val projectRepository: ProjectRepository,
     private val shortRepository: ShortRepository,
     private val subtitleRepository: SubtitleRepository,
+    private val transcriptRepository: TranscriptRepository,
     private val exportRepository: ExportRepository,
     private val application: Context
 ) {
@@ -45,7 +47,7 @@ class ShortsProcessingManager @Inject constructor(
         if (candidates.isEmpty()) return
 
         val platformKeys = platforms.filter { key -> ExportPlatform.entries.any { it.key == key } }
-            .ifEmpty { listOf("shorts") }
+            .ifEmpty { listOf(ExportPlatform.YOUTUBE.key) }
         val platformKey = platformKeys.joinToString(",")
         val selectedQuality = ExportQuality.entries.firstOrNull {
             it.label == quality || it.name.equals(quality, ignoreCase = true)
@@ -115,7 +117,21 @@ class ShortsProcessingManager @Inject constructor(
             shortRepository.updateExportProgress(candidate.id, "processing", 0f)
 
             try {
-                val subtitles = subtitleRepository.getSegments(candidate.id)
+                val subtitles = subtitleRepository.getSegments(candidate.id).ifEmpty {
+                    transcriptRepository.get(projectId)?.segments
+                        ?.asSequence()
+                        ?.filter { it.endMs > candidate.startMs && it.startMs < candidate.endMs }
+                        ?.map { segment ->
+                            com.shortsfactory.domain.model.SubtitleSegment(
+                                startMs = maxOf(segment.startMs, candidate.startMs),
+                                endMs = minOf(segment.endMs, candidate.endMs),
+                                words = segment.text.trim().split(Regex("\\s+")).filter(String::isNotBlank)
+                            )
+                        }
+                        ?.filter { it.endMs > it.startMs && it.words.isNotEmpty() }
+                        ?.toList()
+                        .orEmpty()
+                }
                 val style = resolveSubtitleStyle("creator")
                 val focusTrack = runCatching {
                     videoEngine.detectFocusTrack(project.videoUri, candidate.startMs, candidate.endMs)
@@ -139,6 +155,16 @@ class ShortsProcessingManager @Inject constructor(
                 }
                 check(outputFile.isFile && outputFile.length() > 0L) {
                     "O FFmpeg não gerou um arquivo de saída válido."
+                }
+                val outputInfo = videoEngine.probe(outputPath)
+                check(outputInfo.width == targetWidth && outputInfo.height == targetHeight) {
+                    "A resolução exportada não corresponde ao preset selecionado."
+                }
+                check(outputInfo.durationMs > 0L && outputInfo.durationMs <= (candidate.endMs - candidate.startMs) + 1_000L) {
+                    "A duração do arquivo exportado é inválida."
+                }
+                check(outputInfo.hasAudio) {
+                    "O arquivo exportado não contém áudio."
                 }
                 exportRepository.markDone(exportId, outputPath)
                 shortRepository.updateExportState(candidate.id, outputPath, "done")
