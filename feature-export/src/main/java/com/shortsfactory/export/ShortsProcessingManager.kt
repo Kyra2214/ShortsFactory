@@ -156,6 +156,16 @@ class ShortsProcessingManager @Inject constructor(
                 check(outputFile.isFile && outputFile.length() > 0L) {
                     "O FFmpeg não gerou um arquivo de saída válido."
                 }
+                val outputInfo = videoEngine.probe(outputPath)
+                check(outputInfo.width == targetWidth && outputInfo.height == targetHeight) {
+                    "A resolução exportada não corresponde ao preset selecionado."
+                }
+                check(outputInfo.durationMs > 0L && outputInfo.durationMs <= (candidate.endMs - candidate.startMs) + 1_000L) {
+                    "A duração do arquivo exportado é inválida."
+                }
+                check(outputInfo.hasAudio) {
+                    "O arquivo exportado não contém áudio."
+                }
                 exportRepository.markDone(exportId, outputPath)
                 shortRepository.updateExportState(candidate.id, outputPath, "done")
             } catch (ce: CancellationException) {
