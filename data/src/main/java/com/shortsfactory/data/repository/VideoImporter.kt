@@ -28,9 +28,10 @@ class VideoImporter(private val appContext: Context) {
     suspend fun downloadFromUrl(url: String): ImportResult = withContext(Dispatchers.IO) {
         try {
             require(url.startsWith("http://") || url.startsWith("https://")) { "URL de vídeo inválida." }
+            val transferKey = stableTransferKey(url)
+            val partialFile = File(appContext.cacheDir, "video_$transferKey.part")
             val extensionHint = guessExtension(url, null)
-            val finalFile = File(appContext.filesDir, "video_" + System.currentTimeMillis() + "." + extensionHint)
-            val partialFile = File(appContext.cacheDir, finalFile.name + ".part")
+            val finalFile = File(appContext.filesDir, "video_$transferKey.$extensionHint")
             var offset = if (partialFile.isFile) partialFile.length() else 0L
 
             val requestBuilder = Request.Builder().url(url)
@@ -86,6 +87,13 @@ class VideoImporter(private val appContext: Context) {
             Log.w(TAG, "Falha ao importar vídeo", e)
             ImportResult.Failure("Falha ao importar arquivo: ${e.message}")
         }
+    }
+
+    private fun stableTransferKey(url: String): String {
+        return java.security.MessageDigest.getInstance("SHA-256")
+            .digest(url.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+            .take(24)
     }
 
     private fun guessExtension(source: String, contentType: String?): String {
