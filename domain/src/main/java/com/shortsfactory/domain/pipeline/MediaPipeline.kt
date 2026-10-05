@@ -76,7 +76,8 @@ class MediaAnalysisPipeline(
     private val candidateSelector: CandidateSelector,
     private val audioExtractor: AudioExtractorService,
     private val transcription: TranscriptionService,
-    private val videoEngine: VideoEngine? = null
+    private val videoEngine: VideoEngine? = null,
+    private val candidateScorer: CandidateScorer = CandidateScorer()
 ) {
 
     suspend fun analyze(
@@ -117,7 +118,10 @@ class MediaAnalysisPipeline(
 
             currentStage = PipelineStage.CandidateSelection
             update(currentStage, StageState.PROCESSING)
-            val selected = candidateSelector.select(result.candidates, config)
+            val rescored = result.candidates.map { candidate ->
+                candidateScorer.score(candidate, transcript, maxDurationForPreset(config.preset))
+            }
+            val selected = candidateSelector.select(rescored, config)
             update(currentStage, StageState.COMPLETED, 1f)
 
             currentStage = PipelineStage.SubtitleGeneration
@@ -146,6 +150,15 @@ class MediaAnalysisPipeline(
             currentStage?.let { update(it, StageState.FAILED, message = message) }
             return AnalysisOutcome.Failed("Falha em ${currentStage?.label ?: "etapa desconhecida"}: $message")
         }
+    }
+
+    private fun maxDurationForPreset(preset: String): Long? = when (preset) {
+        "15s" -> DurationPreset.FifteenSeconds.maxMs
+        "30s" -> DurationPreset.ThirtySeconds.maxMs
+        "45s" -> DurationPreset.FortyFiveSeconds.maxMs
+        "60s" -> DurationPreset.SixtySeconds.maxMs
+        "90s" -> DurationPreset.NinetySeconds.maxMs
+        else -> null
     }
 
     private fun validateInput(videoPath: String): InputVideoInfo {
