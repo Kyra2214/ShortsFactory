@@ -23,6 +23,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -146,6 +148,7 @@ class FfmpegVideoEngine constructor(private val appContext: Context) : VideoEngi
         val default = FocusPoint(timeMs = timeMs, centerX = 0.5f, centerY = 0.5f, width = 1f, height = 1f)
 
         while (timeMs < endMs) {
+            currentCoroutineContext().ensureActive()
             val frameFile = File(workDir, "focus_${timeMs}.jpg")
             try {
                 run(
@@ -160,6 +163,8 @@ class FfmpegVideoEngine constructor(private val appContext: Context) : VideoEngi
                 )
                 val center = analyzeFrameCenter(frameFile, timeMs) ?: default.copy(timeMs = timeMs)
                 points += center
+            } catch (ce: CancellationException) {
+                throw ce
             } catch (e: Exception) {
                 Log.w(TAG, "Falha ao amostrar frame em ${timeMs}ms, usando centro", e)
                 points += default
