@@ -125,13 +125,3 @@ jobs:
             **/build/outputs/androidTest-results/**
             **/build/outputs/code_coverage/**
 
-  dependency-review:
-    name: Dependency review
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: write
-    steps:
-      - name: Dependency review
-        uses: actions/dependency-review-action@v4
