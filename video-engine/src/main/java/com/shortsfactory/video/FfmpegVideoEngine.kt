@@ -47,7 +47,10 @@ class FfmpegVideoEngine constructor(private val appContext: Context) : VideoEngi
     private val mutex = Mutex()
 
     override fun cancel() {
-        runningProcess?.destroy()
+        runningProcess?.let { process ->
+            process.destroy()
+            if (process.isAlive) process.destroyForcibly()
+        }
     }
 
     override fun probe(path: String): InputVideoInfo {
