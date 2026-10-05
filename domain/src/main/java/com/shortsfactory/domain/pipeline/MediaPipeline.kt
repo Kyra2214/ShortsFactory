@@ -7,6 +7,7 @@ import com.shortsfactory.domain.model.ShortCandidate
 import com.shortsfactory.domain.model.SubtitleSegment
 import com.shortsfactory.domain.model.SubtitleStyleConfig
 import com.shortsfactory.domain.model.Transcript
+import java.io.File
 import kotlinx.coroutines.CancellationException
 
 /** Etapas da pipeline de análise. */
@@ -100,7 +101,7 @@ class MediaAnalysisPipeline(
             val input = validateInput(videoPath)
             update(currentStage, StageState.COMPLETED, 1f, input.width.toString() + "x" + input.height + ", " + input.durationMs + "ms")
 
-            val audioPath = videoPath.replaceLast("video", "audio") + ".mp3"
+            val audioPath = videoPath + ".analysis.mp3"
             currentStage = PipelineStage.AudioExtraction
             update(currentStage, StageState.PROCESSING)
             audioExtractor.extract(videoPath, audioPath)
@@ -142,7 +143,10 @@ class MediaAnalysisPipeline(
             update(currentStage, StageState.COMPLETED, 1f, withFocus.size.toString() + " trilhas")
 
             return AnalysisOutcome.Success(transcript, result.copy(candidates = withFocus), withFocus)
-        } catch (ce: CancellationException) {
+        } finally {
+            File(videoPath + ".analysis.mp3").delete()
+        }
+                } catch (ce: CancellationException) {
             currentStage?.let { failed ->
                 update(failed, StageState.CANCELLED, message = "Análise cancelada.")
                 cancelPendingStages(failed, update)
