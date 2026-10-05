@@ -7,6 +7,7 @@ import com.shortsfactory.domain.model.ShortCandidate
 import com.shortsfactory.domain.model.SubtitleSegment
 import com.shortsfactory.domain.model.SubtitleStyleConfig
 import com.shortsfactory.domain.model.Transcript
+import java.io.File
 import kotlinx.coroutines.CancellationException
 
 /** Etapas da pipeline de análise. */
@@ -100,7 +101,7 @@ class MediaAnalysisPipeline(
             val input = validateInput(videoPath)
             update(currentStage, StageState.COMPLETED, 1f, input.width.toString() + "x" + input.height + ", " + input.durationMs + "ms")
 
-            val audioPath = videoPath.replaceLast("video", "audio") + ".mp3"
+            val audioPath = videoPath + ".analysis.m4a"
             currentStage = PipelineStage.AudioExtraction
             update(currentStage, StageState.PROCESSING)
             audioExtractor.extract(videoPath, audioPath)
@@ -145,16 +146,18 @@ class MediaAnalysisPipeline(
         } catch (ce: CancellationException) {
             currentStage?.let { failed ->
                 update(failed, StageState.CANCELLED, message = "Análise cancelada.")
-                cancelPendingStages(failed, update)
+                cancelPendingStages(failed, ::update)
             }
             return AnalysisOutcome.Cancelled
         } catch (e: Exception) {
             val message = e.message ?: "Erro desconhecido"
             currentStage?.let { failed ->
                 update(failed, StageState.FAILED, message = message)
-                cancelPendingStages(failed, update, "Ignorada porque uma etapa anterior falhou.")
+                cancelPendingStages(failed, ::update, "Ignorada porque uma etapa anterior falhou.")
             }
             return AnalysisOutcome.Failed("Falha em ${currentStage?.label ?: "etapa desconhecida"}: $message")
+        } finally {
+            File(videoPath + ".analysis.m4a").delete()
         }
     }
 
@@ -186,13 +189,8 @@ class MediaAnalysisPipeline(
         return engine?.probe(videoPath) ?: InputVideoInfo(videoPath, 0L, 0, 0, 0.0, true)
     }
 
-    private fun buildSubtitles(candidate: ShortCandidate, transcript: Transcript): List<SubtitleSegment> {
-        return transcript.segments.asSequence()
-            .filter { it.endMs > candidate.startMs && it.startMs < candidate.endMs }
-            .map { SubtitleSegment(maxOf(it.startMs, candidate.startMs), minOf(it.endMs, candidate.endMs), it.text.trim().split(Regex("\\s+")).filter(String::isNotBlank)) }
-            .filter { it.endMs > it.startMs && it.words.isNotEmpty() }
-            .toList()
-    }
+    private fun buildSubtitles(candidate: ShortCandidate, transcript: Transcript): List<SubtitleSegment> =
+        SubtitleTiming.fromTranscript(transcript.segments, candidate.startMs, candidate.endMs)
 
     private fun staticCenterTrack(candidate: ShortCandidate): FocusTrack {
         val duration = (candidate.endMs - candidate.startMs).coerceAtLeast(1L)
@@ -200,11 +198,6 @@ class MediaAnalysisPipeline(
             .map { time -> FocusPoint(time, 0.5f, 0.5f, 1f, 1f) }
         return FocusTrack(points, TrackingMethod.STATIC_CENTER)
     }
-}
-
-private fun String.replaceLast(old: String, new: String): String {
-    val idx = lastIndexOf(old)
-    return if (idx >= 0) substring(0, idx) + new + substring(idx + old.length) else this
 }
 
 /** Dica de resumo passada à IA. */

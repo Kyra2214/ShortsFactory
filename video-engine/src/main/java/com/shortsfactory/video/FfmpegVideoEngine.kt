@@ -1,13 +1,12 @@
 package com.shortsfactory.video
 
 import com.shortsfactory.domain.pipeline.ClipSpec
+import com.shortsfactory.domain.pipeline.FfmpegFilterBuilder
 import com.shortsfactory.domain.pipeline.FocusTrack
+import com.shortsfactory.domain.pipeline.FocusTrackBuilder
 import com.shortsfactory.domain.pipeline.FocusPoint
 import com.shortsfactory.domain.pipeline.InputVideoInfo
-import com.shortsfactory.domain.pipeline.TrackingMethod
 import com.shortsfactory.domain.pipeline.VideoEngine
-import com.shortsfactory.domain.model.SubtitleSegment
-import com.shortsfactory.domain.model.SubtitleStyleConfig
 
 import android.content.Context
 import android.graphics.Bitmap
@@ -16,7 +15,6 @@ import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.face.FaceDetection
 import com.google.mlkit.vision.face.FaceDetector
 import com.google.mlkit.vision.face.FaceDetectorOptions
-import com.shortsfactory.core.AssetExtractor
 
 import android.util.Log
 import kotlinx.coroutines.CancellationException
@@ -47,17 +45,12 @@ class FfmpegVideoEngine constructor(private val appContext: Context) : VideoEngi
 
     @Volatile private var runningProcess: Process? = null
     private val mutex = Mutex()
-    private val faceDetector: FaceDetector by lazy {
-        FaceDetection.getClient(
-            FaceDetectorOptions.Builder()
-                .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
-                .enableTracking()
-                .build()
-        )
-    }
 
     override fun cancel() {
-        runningProcess?.destroy()
+        runningProcess?.let { process ->
+            process.destroy()
+            if (process.isAlive) process.destroyForcibly()
+        }
     }
 
     override fun probe(path: String): InputVideoInfo {
@@ -69,30 +62,30 @@ class FfmpegVideoEngine constructor(private val appContext: Context) : VideoEngi
         val args = listOf(
             "-y", "-loglevel", "warning",
             "-i", videoPath,
-            "-vn", "-acodec", "libmp3lame", "-q:a", "4",
+            "-vn", "-ac", "1", "-c:a", FfmpegCodecs.AUDIO_ENCODER, "-b:a", FfmpegCodecs.ANALYSIS_AUDIO_BITRATE,
             outputPath
         )
-        run(args)
+        runFfmpeg(args)
     }
 
     override suspend fun splitAudio(audioPath: String, outputDir: String, chunkDurationMs: Long): List<String> {
         require(chunkDurationMs > 0L) { "A duração do fragmento de áudio deve ser positiva." }
         val dir = File(outputDir).apply { mkdirs() }
         dir.listFiles { file -> file.getName().startsWith("audio_chunk_") }?.forEach(File::delete)
-        val pattern = File(dir, "audio_chunk_%03d.mp3").absolutePath
-        run(
+        val pattern = File(dir, "audio_chunk_%03d.${FfmpegCodecs.AUDIO_EXTENSION}").absolutePath
+        runFfmpeg(
             listOf(
                 "-y", "-loglevel", "warning",
                 "-i", audioPath,
                 "-f", "segment",
                 "-segment_time", (chunkDurationMs / 1_000.0).toString(),
                 "-reset_timestamps", "1",
-                "-acodec", "libmp3lame", "-q:a", "4",
+                "-c:a", FfmpegCodecs.AUDIO_ENCODER, "-b:a", FfmpegCodecs.ANALYSIS_AUDIO_BITRATE,
                 pattern
             )
         )
         return dir.listFiles { file ->
-            file.getName().startsWith("audio_chunk_") && file.getName().endsWith(".mp3")
+            file.getName().startsWith("audio_chunk_") && file.getName().endsWith(".${FfmpegCodecs.AUDIO_EXTENSION}")
         }
             ?.sortedBy { it.getName() }
             ?.map { it.getAbsolutePath() }
@@ -105,82 +98,106 @@ class FfmpegVideoEngine constructor(private val appContext: Context) : VideoEngi
 
         val durationMs = spec.endMs - spec.startMs
         require(durationMs > 0L) { "O intervalo do clipe deve ser positivo." }
-        require(spec.targetWidth > 0 && spec.targetHeight > 0) { "A resolução alvo deve ser positiva." }
-        require(spec.fps in 1..120) { "O FPS deve estar entre 1 e 120." }
-        val track = spec.focusTrack
-
-        // crop dinâmico com expressão baseada no tempo (x varia conforme foco)
-        val (cropExpr, scaleExpr) = buildCropAndScale(spec.targetWidth, spec.targetHeight, track, durationMs)
-
-        val subtitleFilter = if (spec.subtitles.isNotEmpty()) {
-            buildSubtitleDraw(spec.subtitles, spec.subtitleStyle)
-        } else null
-
-        val vfParts = mutableListOf(cropExpr, scaleExpr, "fps=${spec.fps}")
-        if (subtitleFilter != null) vfParts += subtitleFilter
-
-        val args = listOf(
-            "-y", "-loglevel", "warning", "-stats",
-            "-ss", (spec.startMs / 1000.0).toString(),
-            "-i", spec.inputPath,
-            "-t", (durationMs / 1000.0).toString(),
-            "-map_metadata", "-1",
-            "-vf", vfParts.joinToString(","),
-            "-c:v", "libx264", "-preset", "fast",
-            "-b:v", spec.bitrateBps.toString(),
-            "-c:a", "aac", "-b:a", "128k",
-            "-movflags", "+faststart",
-            spec.outputPath
-        )
-        run(args, onProgress, progressDurationMs = durationMs)
+        val graph = FfmpegFilterBuilder.filterGraph(spec)
+        if (graph == null) {
+            runFfmpeg(
+                clipArgs(spec, durationMs, emptyList(), listOf("-vf", FfmpegFilterBuilder.videoFilter(spec))),
+                onProgress, progressDurationMs = durationMs
+            )
+            return
+        }
+        val subtitleDir = File(workDir, "subtitles_" + System.nanoTime())
+        try {
+            val images = SubtitleBitmapRenderer.render(graph.subtitles, spec.subtitleStyle, spec.targetWidth, subtitleDir)
+            runFfmpeg(
+                clipArgs(
+                    spec, durationMs, images,
+                    listOf("-filter_complex", graph.filterComplex, "-map", "[${graph.outputLabel}]", "-map", "0:a?")
+                ),
+                onProgress, progressDurationMs = durationMs
+            )
+        } finally {
+            subtitleDir.deleteRecursively()
+        }
     }
+
+    private fun clipArgs(
+        spec: ClipSpec,
+        durationMs: Long,
+        extraInputs: List<File>,
+        filterArgs: List<String>
+    ): List<String> =
+        listOf("-y", "-loglevel", "warning", "-stats", "-ss", (spec.startMs / 1000.0).toString(), "-i", spec.inputPath) +
+            extraInputs.flatMap { listOf("-i", it.absolutePath) } +
+            listOf("-t", (durationMs / 1000.0).toString(), "-map_metadata", "-1") +
+            filterArgs +
+            listOf(
+                "-c:v", FfmpegCodecs.VIDEO_ENCODER,
+                "-b:v", spec.bitrateBps.toString(),
+                "-c:a", FfmpegCodecs.AUDIO_ENCODER, "-b:a", FfmpegCodecs.AUDIO_BITRATE,
+                "-movflags", "+faststart",
+                spec.outputPath
+            )
 
     override suspend fun detectFocusTrack(
         videoPath: String,
         startMs: Long,
         endMs: Long
     ): FocusTrack {
-        val points = mutableListOf<FocusPoint>()
-        var timeMs = startMs
-        val stepMs = 1000L // amostra a cada 1s
-        val default = FocusPoint(timeMs = timeMs, centerX = 0.5f, centerY = 0.42f, width = 0.6f, height = 0.7f)
+        val durationMs = endMs - startMs
+        if (durationMs <= 0L) return FocusTrackBuilder.build(startMs, emptyList())
 
-        while (timeMs < endMs) {
-            val frameFile = File(workDir, "focus_${timeMs}.jpg")
-            try {
-                run(
+        val frameDir = File(workDir, "focus_" + System.nanoTime()).apply { mkdirs() }
+        val detector = FaceDetection.getClient(
+            FaceDetectorOptions.Builder()
+                .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
+                .enableTracking()
+                .build()
+        )
+        try {
+            val extracted = try {
+                // Uma única chamada: um frame por segundo; o frame de índice i corresponde a startMs + i * 1000.
+                runFfmpeg(
                     listOf(
                         "-y", "-loglevel", "error",
-                        "-ss", (timeMs / 1000.0).toString(),
+                        "-ss", (startMs / 1000.0).toString(),
                         "-i", videoPath,
-                        "-frames:v", "1",
-                        frameFile.absolutePath
+                        "-t", (durationMs / 1000.0).toString(),
+                        "-vf", "fps=1,scale=640:-2",
+                        "-q:v", "3",
+                        "-start_number", "0",
+                        File(frameDir, "frame_%04d.jpg").absolutePath
                     ),
-                    timeoutMs = 20_000L
+                    timeoutMs = FRAME_SAMPLING_TIMEOUT_MS
                 )
-                val center = analyzeFrameCenter(frameFile, timeMs) ?: default.copy(timeMs = timeMs)
-                points += center
+                true
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
-                Log.w(TAG, "Falha ao amostrar frame em ${timeMs}ms, usando centro", e)
-                points += default
-            } finally {
-                frameFile.delete()
+                Log.w(TAG, "Falha ao amostrar frames, usando foco central", e)
+                false
             }
-            timeMs += stepMs
+            val sampleCount = ((durationMs + FocusTrackBuilder.SAMPLE_STEP_MS - 1) / FocusTrackBuilder.SAMPLE_STEP_MS).toInt()
+            val detections: List<FocusPoint?> = if (!extracted) emptyList() else List(sampleCount) { index ->
+                val frame = File(frameDir, String.format(java.util.Locale.ROOT, "frame_%04d.jpg", index))
+                try {
+                    analyzeFrameCenter(detector, frame, startMs + index * FocusTrackBuilder.SAMPLE_STEP_MS)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w(TAG, "Falha ao detectar rosto no frame $index", e)
+                    null
+                }
+            }
+            return FocusTrackBuilder.build(startMs, detections)
+        } finally {
+            detector.close()
+            frameDir.deleteRecursively()
         }
-        val finalPoints = smoothFocusPoints(points.ifEmpty { listOf(default) })
-        return FocusTrack(
-            finalPoints,
-            if (finalPoints.any { it.centerX != 0.5f || it.centerY != 0.42f }) {
-                TrackingMethod.FACE_TRACKING
-            } else {
-                TrackingMethod.STATIC_CENTER
-            }
-        )
     }
 
     override suspend fun extractFrame(videoPath: String, timeMs: Long, outputPath: String) {
-        run(
+        runFfmpeg(
             listOf(
                 "-y", "-loglevel", "error",
                 "-ss", (timeMs / 1000.0).toString(),
@@ -212,107 +229,7 @@ class FfmpegVideoEngine constructor(private val appContext: Context) : VideoEngi
     private fun parseProbeOutput(path: String, output: String): InputVideoInfo =
         FfprobeParser.parse(path, output)
 
-    private fun buildCropAndScale(
-        targetWidth: Int,
-        targetHeight: Int,
-        track: FocusTrack?,
-        durationMs: Long
-    ): Pair<String, String> {
-        if (track == null) {
-            return Pair(
-                "crop=min(iw\\,ih*$targetWidth/$targetHeight):min(ih\\,iw*$targetHeight/$targetWidth):(iw-min(iw\\,ih*$targetWidth/$targetHeight))/2:(ih-min(ih\\,iw*$targetHeight/$targetWidth))/2",
-                "scale=$targetWidth:$targetHeight"
-            )
-        }
-        val cropHeightExpr = "min(ih\\,iw*$targetHeight/$targetWidth)"
-        val cropWidthExpr = "min(iw\\,ih*$targetWidth/$targetHeight)"
-        val durationSec = durationMs / 1000.0
-        val points = track.points
-        val xExpr = buildInterpolatedXExpression(points, durationSec, cropWidthExpr, horizontal = true)
-        val yExpr = buildInterpolatedYExpression(points, durationSec, cropHeightExpr)
-        return Pair(
-            "crop=$cropWidthExpr:$cropHeightExpr:$xExpr:$yExpr",
-            "scale=$targetWidth:$targetHeight"
-        )
-    }
-
-    private fun buildInterpolatedXExpression(
-        points: List<FocusPoint>,
-        durationSec: Double,
-        cropSizeExpr: String,
-        horizontal: Boolean = true
-    ): String {
-        if (points.size <= 1) {
-            val center = if (horizontal) points.firstOrNull()?.centerX ?: 0.5f else points.firstOrNull()?.centerY ?: 0.5f
-            val axis = if (horizontal) "iw" else "ih"
-            return "($axis-$cropSizeExpr)*$center"
-        }
-        val lastT = points.last().timeMs / 1000.0
-        val normalized = if (lastT > 0) points.map {
-            it.copy(timeMs = (it.timeMs / 1000.0 / lastT * durationSec).toLong())
-        } else points
-        val anchors = normalized.mapIndexed { i, p ->
-            val center = if (horizontal) p.centerX else p.centerY
-            ((i * durationSec / maxOf(1, normalized.size - 1))) to center
-        }
-        if (anchors.size == 1) {
-            val axis = if (horizontal) "iw" else "ih"
-            return "($axis-$cropSizeExpr)*${anchors[0].second}"
-        }
-        val axis = if (horizontal) "iw" else "ih"
-        val expr = StringBuilder("($axis-$cropSizeExpr)*")
-        val (_, c0) = anchors[0]
-        val (_, c1) = anchors[1]
-        expr.append("if(lt(t\\,$t1)\\,$c0\\,")
-        for (i in 1 until anchors.size - 1) {
-            val (a0, b0) = anchors[i]
-            val (a1, b1) = anchors[i + 1]
-            val frac = "(${b1}-${b0})/max(0.001\\,(${a1}-${a0}))"
-            expr.append("if(between(t\\,$a0\\,$a1)\\,${b0}+$frac*(t-$a0)\\,")
-        }
-        expr.append("${anchors.last().second}")
-        repeat(anchors.size - 2) { expr.append(")") }
-        expr.append(")")
-        return expr.toString()
-    }
-
-    private fun buildInterpolatedYExpression(points: List<FocusPoint>, durationSec: Double, cropHeightExpr: String): String =
-        buildInterpolatedXExpression(points, durationSec, cropHeightExpr, horizontal = false)
-
-    private fun buildSubtitleDraw(segments: List<SubtitleSegment>, style: SubtitleStyleConfig): String {
-        val drawtexts = segments.map { seg ->
-            val text = seg.words.joinToString(" ")
-                .replace("'", "\\\\'")
-                .replace(":", "\\:")
-                .replace(",", "\\,")
-            val start = seg.startMs / 1000.0
-            val end = seg.endMs / 1000.0
-            val size = style.fontSizePx
-            val y = "(h*${style.positionPercent}/100)-n*${size / 8}"
-            val color = "white@0.95"
-            val border = if (style.styleKey == "minimal") "0" else "2"
-            "drawtext=text='$text':x=(w-text_w)/2:y=$y:fontsize=$size:fontcolor=$color:borderw=$border:bordercolor=black@0.8:enable='between(t\\,$start\\,$end)'"
-        }
-        return drawtexts.joinToString(",")
-    }
-
-    private fun smoothFocusPoints(points: List<FocusPoint>): List<FocusPoint> {
-        if (points.size < 2) return points
-        val smoothed = mutableListOf(points.first())
-        for (point in points.drop(1)) {
-            val previous = smoothed.last()
-            val alpha = 0.65f
-            smoothed += point.copy(
-                centerX = (previous.centerX * (1f - alpha) + point.centerX * alpha).coerceIn(0f, 1f),
-                centerY = (previous.centerY * (1f - alpha) + point.centerY * alpha).coerceIn(0f, 1f),
-                width = (previous.width * (1f - alpha) + point.width * alpha).coerceIn(0f, 1f),
-                height = (previous.height * (1f - alpha) + point.height * alpha).coerceIn(0f, 1f)
-            )
-        }
-        return smoothed
-    }
-
-    private suspend fun analyzeFrameCenter(frameFile: File, timeMs: Long): FocusPoint? =
+    private suspend fun analyzeFrameCenter(detector: FaceDetector, frameFile: File, timeMs: Long): FocusPoint? =
         suspendCancellableCoroutine { continuation ->
             if (!frameFile.exists()) {
                 continuation.resume(null)
@@ -326,7 +243,7 @@ class FfmpegVideoEngine constructor(private val appContext: Context) : VideoEngi
             }
 
             val image = InputImage.fromBitmap(bitmap, 0)
-            faceDetector.process(image)
+            detector.process(image)
                 .addOnSuccessListener { faces ->
                     val face = faces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }
                     val result = face?.let {
@@ -348,27 +265,22 @@ class FfmpegVideoEngine constructor(private val appContext: Context) : VideoEngi
                 }
         }
 
-    private fun ffmpegPath(): String {
-        // Binário embutido no APK (jniLibs/arm64-v8a/ffmpeg).
-        val bundled = File(appContext.applicationInfo.nativeLibraryDir, "ffmpeg")
-        if (bundled.exists() && bundled.canExecute()) return bundled.absolutePath
-        return AssetExtractor.extractIfNeeded(appContext)?.absolutePath
-            ?: bundled.absolutePath
+    private fun ffmpegPath(): String = nativeBinary("libffmpeg.so")
+
+    private fun ffprobePath(): String = nativeBinary("libffprobe.so")
+
+    private fun nativeBinary(fileName: String): String {
+        val file = File(appContext.applicationInfo.nativeLibraryDir, fileName)
+        check(file.exists()) { "Binário nativo ausente em nativeLibraryDir: $fileName" }
+        return file.absolutePath
     }
 
-    private fun ffprobePath(): String {
-        val bundled = File(appContext.applicationInfo.nativeLibraryDir, "ffprobe")
-        if (bundled.exists() && bundled.canExecute()) return bundled.absolutePath
-        return AssetExtractor.extractIfNeeded(appContext, "ffprobe")?.absolutePath
-            ?: bundled.absolutePath
-    }
-
-    private suspend fun run(
+    private suspend fun runFfmpeg(
         args: List<String>,
         onProgress: (Float) -> Unit = {},
         timeoutMs: Long = TIMEOUT_MS,
         progressDurationMs: Long? = null
-    ) = suspendCancellableCoroutine { cont ->
+    ): Unit = suspendCancellableCoroutine<Unit> { cont ->
         var process: Process? = null
         val job = CoroutineScope(Dispatchers.IO).launch {
             try {
@@ -459,6 +371,7 @@ class FfmpegVideoEngine constructor(private val appContext: Context) : VideoEngi
 
     companion object {
         private const val TAG = "FfmpegVideoEngine"
+        private const val FRAME_SAMPLING_TIMEOUT_MS = 5L * 60 * 1000
         private const val TIMEOUT_MS = 30L * 60 * 1000 // 30 min por operação longa
 
         private val REGEX_TIME = Regex("time=([\\d:.]+)")

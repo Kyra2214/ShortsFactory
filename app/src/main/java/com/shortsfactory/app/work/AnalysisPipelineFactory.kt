@@ -21,6 +21,7 @@ class AnalysisPipelineFactory @Inject constructor(
                 videoEngine.extractAudio(videoPath, outputPath)
             }
         },
-        transcription = transcriptionService
+        transcription = transcriptionService,
+        videoEngine = videoEngine
     )
 }

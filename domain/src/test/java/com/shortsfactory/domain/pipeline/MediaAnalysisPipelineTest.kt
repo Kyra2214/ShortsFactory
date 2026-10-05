@@ -9,9 +9,18 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 
 class MediaAnalysisPipelineTest {
+
+    // A pipeline valida a existência do arquivo de entrada; os testes precisam de um arquivo real.
+    @get:Rule
+    val temporaryFolder = TemporaryFolder()
+
+    private fun videoPath(): String =
+        temporaryFolder.newFile("source.mp4").apply { writeText("fixture") }.absolutePath
 
     @Test
     fun `success emits all stages and selects candidates`() = runTest {
@@ -28,7 +37,7 @@ class MediaAnalysisPipelineTest {
             }
         )
 
-        val outcome = pipeline.analyze("video.mp4", GenerationConfig("30s")) { updates += it }
+        val outcome = pipeline.analyze(videoPath(), GenerationConfig("30s")) { updates += it }
 
         assertTrue(outcome is AnalysisOutcome.Success)
         assertEquals(PipelineStage.values().toSet(), updates.map { it.stage }.toSet())
@@ -50,7 +59,7 @@ class MediaAnalysisPipelineTest {
             }
         )
 
-        val outcome = pipeline.analyze("video.mp4", GenerationConfig("30s")) { updates += it }
+        val outcome = pipeline.analyze(videoPath(), GenerationConfig("30s")) { updates += it }
 
         assertTrue(outcome is AnalysisOutcome.Failed)
         val failed = updates.last { it.stage == PipelineStage.AIAnalysis }
@@ -72,7 +81,7 @@ class MediaAnalysisPipelineTest {
             }
         )
 
-        val outcome = pipeline.analyze("video.mp4", GenerationConfig("30s")) { updates += it }
+        val outcome = pipeline.analyze(videoPath(), GenerationConfig("30s")) { updates += it }
 
         assertEquals(AnalysisOutcome.Cancelled, outcome)
         assertEquals(StageState.CANCELLED, updates.last { it.stage == PipelineStage.AIAnalysis }.state)

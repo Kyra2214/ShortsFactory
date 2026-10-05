@@ -1,5 +1,7 @@
 # Roadmap de implementação — 12 fases
 
+> **Estado real do projeto:** veja `docs/AUDITORIA-E-FASES.md` (auditoria e plano corrigido) e `docs/fases/` (relatório de cada fase executada). Este roadmap descreve a intenção original; várias fases aqui listadas não estavam funcionando quando foram marcadas como concluídas.
+
 Este documento é a referência operacional do ciclo. Uma fase só é considerada concluída quando o código executa o caminho real, os componentes faltantes são implementados e os testes/CI que cobrem o contrato passam.
 
 ## Fase 1 — Pipeline real
@@ -15,7 +17,7 @@ Este documento é a referência operacional do ciclo. Uma fase só é considerad
 ## Fase 2 — Legendas reais
 - Segmentos de transcript convertidos em segmentos de legenda.
 - Timestamps recortados ao intervalo do candidato.
-- FFmpeg aplica drawtext durante exportação.
+- O Android renderiza cada segmento em PNG transparente e o FFmpeg aplica os overlays no intervalo relativo do clipe; não depende de `drawtext`/libass.
 - Exportação usa transcript como fallback quando não houver artefato de legenda persistido.
 
 ## Fase 3 — Focus tracking
@@ -86,6 +88,9 @@ Este documento é a referência operacional do ciclo. Uma fase só é considerad
 - Chaves somente em armazenamento seguro do dispositivo.
 - Binários FFmpeg/ffprobe incluídos no artefato.
 - Documentação alinhada ao comportamento real.
+
+## Progresso (plano corrigido)
+Fase 0: implementada, gate de CI pendente. Fase 1: implementada, gate arm64 pendente. Fase 2: implementada (5/5), gates pendentes. Progresso geral: ~27% (3 de 11 fases implementadas; nenhum gate executado por falta de Gradle/aparelho).
 
 ## Regra de encerramento
 

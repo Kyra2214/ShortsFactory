@@ -28,23 +28,35 @@ class VideoImporter(private val appContext: Context) {
     suspend fun downloadFromUrl(url: String): ImportResult = withContext(Dispatchers.IO) {
         try {
             require(url.startsWith("http://") || url.startsWith("https://")) { "URL de vídeo inválida." }
+            val transferKey = stableTransferKey(url)
+            val partialFile = File(appContext.cacheDir, "video_$transferKey.part")
             val extensionHint = guessExtension(url, null)
-            val finalFile = File(appContext.filesDir, "video_" + System.currentTimeMillis() + "." + extensionHint)
-            val partialFile = File(appContext.cacheDir, finalFile.name + ".part")
+            val finalFile = File(appContext.filesDir, "video_$transferKey.$extensionHint")
             var offset = if (partialFile.isFile) partialFile.length() else 0L
 
             val requestBuilder = Request.Builder().url(url)
                 .header("Accept", "video/*,application/octet-stream;q=0.9,*/*;q=0.1")
             if (offset > 0L) requestBuilder.header("Range", "bytes=" + offset + "-")
 
-            val response = client.newCall(requestBuilder.build()).execute()
-            val body = response.body ?: return@withContext ImportResult.Failure("Resposta vazia da fonte.")
-            if (!response.isSuccessful && response.code != 206) return@withContext ImportResult.Failure("A fonte não permitiu o acesso (" + response.code + "). O aplicativo não contorna proteções de download.")
-            val contentType = body.contentType()?.toString()?.lowercase()
-            if (contentType != null && contentType.contains("text/html")) return@withContext ImportResult.Failure("A URL retornou uma página HTML, não um arquivo de vídeo.")
+            client.newCall(requestBuilder.build()).execute().use { response ->
+                val body = response.body ?: return@withContext ImportResult.Failure("Resposta vazia da fonte.")
+                if (!response.isSuccessful && response.code != 206) return@withContext ImportResult.Failure("A fonte não permitiu o acesso (" + response.code + "). O aplicativo não contorna proteções de download.")
+                val contentType = body.contentType()?.toString()?.lowercase()
+                if (contentType != null && contentType.contains("text/html")) return@withContext ImportResult.Failure("A URL retornou uma página HTML, não um arquivo de vídeo.")
 
-            val append = offset > 0L && response.code == 206
-            if (!append) { offset = 0L; partialFile.delete() }
+                val append = offset > 0L && response.code == 206
+                if (append) {
+                    val rangeStart = response.header("Content-Range")
+                        ?.substringAfter("bytes ", "")
+                        ?.substringBefore("-", "")
+                        ?.toLongOrNull()
+                    if (rangeStart != offset) {
+                        return@withContext ImportResult.Failure("A fonte retornou um intervalo HTTP incompatível com o download parcial.")
+                    }
+                } else {
+                    offset = 0L
+                    partialFile.delete()
+                }
             val maxBytes = MAX_IMPORT_BYTES
             val expectedLength = body.contentLength().takeIf { it >= 0L } ?: -1L
             if (expectedLength >= 0L && offset + expectedLength > maxBytes) return@withContext ImportResult.Failure("O vídeo excede o limite local.")
@@ -63,10 +75,11 @@ class VideoImporter(private val appContext: Context) {
                     }
                 }
             }
-            if (!partialFile.isFile || partialFile.length() == 0L) return@withContext ImportResult.Failure("O arquivo baixado está vazio.")
-            partialFile.copyTo(finalFile, overwrite = true)
-            partialFile.delete()
-            ImportResult.Success(finalFile.absolutePath)
+                if (!partialFile.isFile || partialFile.length() == 0L) return@withContext ImportResult.Failure("O arquivo baixado está vazio.")
+                partialFile.copyTo(finalFile, overwrite = true)
+                partialFile.delete()
+                ImportResult.Success(finalFile.absolutePath)
+            }
         } catch (e: Exception) {
             Log.w(TAG, "Falha ao baixar vídeo", e)
             ImportResult.Failure("Falha ao baixar: ${e.message}")
@@ -78,14 +91,27 @@ class VideoImporter(private val appContext: Context) {
         try {
             val extension = guessExtension(uri.toString(), null)
             val outputFile = File(appContext.filesDir, "video_${System.currentTimeMillis()}.$extension")
-            appContext.contentResolver.openInputStream(uri)?.use { input ->
-                FileOutputStream(outputFile).use { output -> input.copyTo(output) }
+            val input = appContext.contentResolver.openInputStream(uri)
+                ?: return@withContext ImportResult.Failure("Não foi possível abrir o arquivo selecionado.")
+            input.use {
+                FileOutputStream(outputFile).use { output -> it.copyTo(output) }
+            }
+            if (!outputFile.isFile || outputFile.length() == 0L) {
+                outputFile.delete()
+                return@withContext ImportResult.Failure("O arquivo selecionado está vazio.")
             }
             ImportResult.Success(outputFile.absolutePath)
         } catch (e: Exception) {
             Log.w(TAG, "Falha ao importar vídeo", e)
             ImportResult.Failure("Falha ao importar arquivo: ${e.message}")
         }
+    }
+
+    private fun stableTransferKey(url: String): String {
+        return java.security.MessageDigest.getInstance("SHA-256")
+            .digest(url.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+            .take(24)
     }
 
     private fun guessExtension(source: String, contentType: String?): String {

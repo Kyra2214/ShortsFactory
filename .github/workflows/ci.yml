@@ -5,6 +5,7 @@ on:
     branches: [ main, master, 'roadmap-12-fases' ]
   pull_request:
     branches: [ main, master ]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -29,10 +30,13 @@ jobs:
           java-version: '17'
           cache: gradle
 
-      - name: Install Android SDK components
-        run: |
-          yes | sdkmanager --licenses >/dev/null 2>&1 || true
-          sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+
+      - name: Show installed Android SDK packages
+        run: sdkmanager --list_installed
 
       - name: Validate Gradle wrapper
         uses: gradle/actions/wrapper-validation@v4
@@ -43,8 +47,13 @@ jobs:
       - name: Make Gradle wrapper executable
         run: chmod +x ./gradlew
 
+      - name: Verify bundled FFmpeg checksums
+        run: sha256sum -c tools/ffmpeg-binary/SHA256SUMS
+
+      # :domain é um módulo Kotlin/JVM puro: lá a task é `test`. `testDebugUnitTest` só existe nos módulos Android,
+      # então rodar apenas ela deixaria os testes de pipeline/seleção/score do domain fora do CI.
       - name: Run all JVM unit tests
-        run: ./gradlew testDebugUnitTest --stacktrace --no-daemon --max-workers=2
+        run: ./gradlew :domain:test testDebugUnitTest --stacktrace --no-daemon --max-workers=2
 
       - name: Run debug lint
         run: ./gradlew lintDebug --stacktrace --no-daemon --max-workers=2
@@ -52,9 +61,10 @@ jobs:
       - name: Assemble debug, release and Android test APKs
         run: ./gradlew assembleDebug assembleRelease :app:assembleDebugAndroidTest :data:assembleDebugAndroidTest --stacktrace --no-daemon --max-workers=2
 
-      - name: Upload test, lint and APK reports
+      - name: Upload test, lint and APK reports (non-blocking)
         if: always()
         uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: unit-lint-build-reports
           if-no-files-found: ignore
@@ -81,10 +91,10 @@ jobs:
           java-version: '17'
           cache: gradle
 
-      - name: Install Android SDK components
-        run: |
-          yes | sdkmanager --licenses >/dev/null 2>&1 || true
-          sdkmanager "platforms;android-35" "build-tools;35.0.0" "system-images;android-35;google_apis;x86_64"
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -105,6 +115,8 @@ jobs:
           target: google_apis
           arch: x86_64
           profile: pixel_2
+          # The hosted runner had 7.08 GB free, below the default 7.37 GB userdata requirement.
+          disk-size: 6G
           force-avd-creation: true
           emulator-boot-timeout: 1200
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
@@ -112,9 +124,10 @@ jobs:
           disable-spellchecker: true
           script: ./gradlew :data:connectedDebugAndroidTest --stacktrace --no-daemon --max-workers=2
 
-      - name: Upload instrumented reports
+      - name: Upload instrumented reports (non-blocking)
         if: always()
         uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: instrumented-reports
           if-no-files-found: ignore
@@ -122,4 +135,3 @@ jobs:
             **/build/reports/androidTests/**
             **/build/outputs/androidTest-results/**
             **/build/outputs/code_coverage/**
-

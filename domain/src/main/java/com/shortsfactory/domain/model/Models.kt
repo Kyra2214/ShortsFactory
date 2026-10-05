@@ -20,7 +20,7 @@ data class SubtitleSegment(
     val words: List<String>
 )
 
-/** Configuração visual de legenda aplicada via drawtext do FFmpeg. */
+/** Configuração visual da legenda (renderizada em PNG e aplicada com overlay do FFmpeg). */
 data class SubtitleStyleConfig(
     val styleKey: String,
     val fontSizePx: Int,

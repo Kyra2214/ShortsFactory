@@ -13,7 +13,7 @@ A análise é agendada como trabalho único por projeto. Seu estado persistente 
 | Módulo | Responsabilidade |
 | --- | --- |
 | `app` | Activity, composição Hilt, workers do WorkManager e navegação Compose |
-| `core` | Armazenamento seguro das chaves e extração dos binários de mídia |
+| `core` | Armazenamento seguro das chaves |
 | `domain` | Modelos, contratos, validação de mídia e pipeline independente de Android |
 | `data` | Room versão 3, migrações, DAOs, repositórios, importação e transcrição |
 | `video-engine` | FFmpeg/ffprobe local, extração/divisão de áudio, filtros e tracking facial |
@@ -39,7 +39,7 @@ A API aceita arquivos de até 25 MB. Para arquivos maiores, o app extrai o áudi
 
 Antes da análise, o app valida existência e tamanho do arquivo, duração, dimensões, presença de vídeo e presença de áudio quando a transcrição é necessária. O processamento usa FFmpeg/ffprobe local, com verificações de intervalo, resolução e FPS.
 
-O `FfmpegVideoEngine` extrai frames em intervalos de um segundo e usa ML Kit Face Detection para selecionar o maior rosto detectado. O bounding box é normalizado, suavizado temporalmente e aplicado à expressão de crop vertical; quando não há rosto confiável, o pipeline usa um foco central seguro. O engine mantém referência ao processo FFmpeg e destrói o processo em cancelamento ou timeout para evitar tarefas órfãs.
+O `FfmpegVideoEngine` extrai frames em intervalos de um segundo e usa ML Kit Face Detection para selecionar o maior rosto detectado. O bounding box é normalizado, suavizado temporalmente e aplicado à expressão de crop vertical; quando não há rosto confiável, o pipeline usa um foco central seguro. As legendas são renderizadas como PNG transparente (o binário embutido não tem `drawtext`/libass) e aplicadas com `overlay` em tempo relativo ao clipe; a cadeia de filtros é montada por `FfmpegFilterBuilder` no módulo `domain`. O engine mantém referência ao processo FFmpeg e destrói o processo em cancelamento ou timeout para evitar tarefas órfãs.
 
 ## Execução em segundo plano
 
@@ -49,7 +49,7 @@ A exportação reaproveita um resultado concluído quando a combinação de proj
 
 ## Requisitos e configuração local
 
-Para compilar, use JDK 17, Android SDK com a plataforma 35, Build Tools 35.0.0 e o Gradle Wrapper. O app suporta Android API 26 ou superior e o workflow de CI usa um emulador API 35. Os binários `ffmpeg` e `ffprobe` necessários para o processamento local permanecem em `app/src/main/assets`.
+Para compilar, use JDK 17, Android SDK com a plataforma 35, Build Tools 35.0.0 e o Gradle Wrapper. O app suporta Android API 26 ou superior e o workflow de CI usa um emulador API 35. Os binários `ffmpeg` e `ffprobe` (arm64-v8a) ficam em `app/src/main/jniLibs/arm64-v8a/libffmpeg.so` e `libffprobe.so` e são executados de `applicationInfo.nativeLibraryDir` (`useLegacyPackaging = true`).
 
 Crie `local.properties` apontando para o SDK local, por exemplo `sdk.dir=/caminho/para/Android/Sdk`, e não versione esse arquivo. Chaves de IA devem ser inseridas somente dentro do app ou fornecidas por um mecanismo seguro de distribuição; nunca coloque credenciais reais no código, nos testes ou no Git.
 
@@ -58,10 +58,10 @@ Crie `local.properties` apontando para o SDK local, por exemplo `sdk.dir=/caminh
 Os comandos principais são:
 
 ```bash
-./gradlew testDebugUnitTest --stacktrace --no-daemon --max-workers=1
+./gradlew :domain:test testDebugUnitTest --stacktrace --no-daemon --max-workers=1
 ./gradlew lintDebug --stacktrace --no-daemon --max-workers=1
 ./gradlew assembleDebug assembleRelease --stacktrace --no-daemon --max-workers=1
-./gradlew test lint assembleDebug assembleRelease --stacktrace --no-daemon --max-workers=1
+./gradlew :domain:test test lint assembleDebug assembleRelease --stacktrace --no-daemon --max-workers=1
 ```
 
 A suíte JVM cobre seleção de candidatos, sucesso/falha/cancelamento do pipeline, codec e parser de transcript, parser de `ffprobe`, validação de mídia, repositórios e transições persistentes de exportação. O teste instrumentado `ShortsDatabaseMigrationTest` verifica a migração Room `1 → 2 → 3`, defaults e preservação de registros em SQLite real:
@@ -74,9 +74,9 @@ Os testes automatizados não fazem chamadas ao Grok ou à OpenAI. Testes com FFm
 
 ## Integração contínua
 
-O workflow `.github/workflows/ci.yml` executa em pushes para `main`/`master` e em pull requests. O job principal configura JDK 17, usa o Android SDK disponível no runner, valida o Gradle Wrapper, executa testes JVM, lint e builds debug/release, e publica relatórios e APKs como artefatos mesmo quando uma etapa falha.
+O workflow `.github/workflows/ci.yml` executa em pushes para `main`/`master` e em pull requests. O job principal configura JDK 17 e Android SDK, valida o Gradle Wrapper e os hashes FFmpeg, executa os testes JVM (incluindo `:domain:test`), lint e builds debug/release/test. Os uploads auxiliares de relatórios/APKs são tentados mesmo quando uma etapa falha, mas são não bloqueantes: se a quota do GitHub Actions estiver cheia, o gate de código continua avaliável, embora os artefatos não sejam armazenados.
 
-O segundo job inicializa um emulador API 35 e executa `connectedCheck`, incluindo o teste de migração Room. A antiga etapa de dependency review foi removida porque o repositório privado não tem GitHub Advanced Security/Dependency Graph habilitado; ela não deve ser tratada como um gate executável. A concorrência cancela uma execução antiga da mesma referência quando uma nova alteração é enviada.
+O segundo job inicializa um emulador API 35 x86_64 e executa `:data:connectedDebugAndroidTest`, incluindo o teste de migração Room. Isso não valida execução do binário FFmpeg arm64 em aparelho real. A antiga etapa de dependency review foi removida porque o repositório privado não tem GitHub Advanced Security/Dependency Graph habilitado; ela não deve ser tratada como um gate executável. A concorrência cancela uma execução antiga da mesma referência quando uma nova alteração é enviada.
 
 A CI não recebe nem exige chaves de IA. A publicação automática em lojas, autenticação OAuth de provedores externos e distribuição de segredos de produção não fazem parte deste repositório; devem ser adicionadas posteriormente em um ambiente de release seguro.
 
