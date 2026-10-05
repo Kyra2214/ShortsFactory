@@ -113,7 +113,7 @@ class FfmpegVideoEngine constructor(private val appContext: Context) : VideoEngi
         val (cropExpr, scaleExpr) = buildCropAndScale(spec.targetWidth, spec.targetHeight, track, durationMs)
 
         val subtitleFilter = if (spec.subtitles.isNotEmpty()) {
-            buildSubtitleDraw(spec.subtitles, spec.subtitleStyle)
+            buildSubtitleDraw(spec.subtitles, spec.subtitleStyle, spec.startMs, durationMs)
         } else null
 
         val vfParts = mutableListOf(cropExpr, scaleExpr, "fps=${spec.fps}")
@@ -143,7 +143,7 @@ class FfmpegVideoEngine constructor(private val appContext: Context) : VideoEngi
         val points = mutableListOf<FocusPoint>()
         var timeMs = startMs
         val stepMs = 1000L // amostra a cada 1s
-        val default = FocusPoint(timeMs = timeMs, centerX = 0.5f, centerY = 0.42f, width = 0.6f, height = 0.7f)
+        val default = FocusPoint(timeMs = timeMs, centerX = 0.5f, centerY = 0.5f, width = 1f, height = 1f)
 
         while (timeMs < endMs) {
             val frameFile = File(workDir, "focus_${timeMs}.jpg")
@@ -169,13 +169,10 @@ class FfmpegVideoEngine constructor(private val appContext: Context) : VideoEngi
             timeMs += stepMs
         }
         val finalPoints = smoothFocusPoints(points.ifEmpty { listOf(default) })
+        val hasDetectedFace = points.any { it.width < 0.999f || it.height < 0.999f }
         return FocusTrack(
             finalPoints,
-            if (finalPoints.any { it.centerX != 0.5f || it.centerY != 0.42f }) {
-                TrackingMethod.FACE_TRACKING
-            } else {
-                TrackingMethod.STATIC_CENTER
-            }
+            if (hasDetectedFace) TrackingMethod.FACE_TRACKING else TrackingMethod.STATIC_CENTER
         )
     }
 
@@ -237,56 +234,40 @@ class FfmpegVideoEngine constructor(private val appContext: Context) : VideoEngi
     }
 
     private fun buildInterpolatedXExpression(
-        points: List<FocusPoint>,
-        durationSec: Double,
-        cropSizeExpr: String,
-        horizontal: Boolean = true
+        points: List<FocusPoint>, durationSec: Double, cropSizeExpr: String, horizontal: Boolean = true
     ): String {
-        if (points.size <= 1) {
-            val center = if (horizontal) points.firstOrNull()?.centerX ?: 0.5f else points.firstOrNull()?.centerY ?: 0.5f
+        if (points.isEmpty()) {
             val axis = if (horizontal) "iw" else "ih"
-            return "($axis-$cropSizeExpr)*$center"
+            return "($axis-$cropSizeExpr)*0.5"
         }
-        val lastT = points.last().timeMs / 1000.0
-        val normalized = if (lastT > 0) points.map {
-            it.copy(timeMs = (it.timeMs / 1000.0 / lastT * durationSec).toLong())
-        } else points
-        val anchors = normalized.mapIndexed { i, p ->
-            val center = if (horizontal) p.centerX else p.centerY
-            ((i * durationSec / maxOf(1, normalized.size - 1))) to center
-        }
-        if (anchors.size == 1) {
-            val axis = if (horizontal) "iw" else "ih"
-            return "($axis-$cropSizeExpr)*${anchors[0].second}"
-        }
+        val firstTimeMs = points.first().timeMs
         val axis = if (horizontal) "iw" else "ih"
+        val anchors = points.map { point ->
+            val center = if (horizontal) point.centerX else point.centerY
+            val relativeSec = ((point.timeMs - firstTimeMs).coerceAtLeast(0L) / 1000.0).coerceIn(0.0, durationSec)
+            relativeSec to center.coerceIn(0f, 1f)
+        }.distinctBy { it.first }
+        if (anchors.size == 1) return "($axis-$cropSizeExpr)*" + anchors.first().second
         val expr = StringBuilder("($axis-$cropSizeExpr)*")
-        val (_, c0) = anchors[0]
-        val (_, c1) = anchors[1]
-        expr.append("if(lt(t\\,${anchors[1].first})\\,$c0\\,")
-        for (i in 1 until anchors.size - 1) {
-            val (a0, b0) = anchors[i]
-            val (a1, b1) = anchors[i + 1]
-            val frac = "(${b1}-${b0})/max(0.001\\,(${a1}-${a0}))"
-            expr.append("if(between(t\\,$a0\\,$a1)\\,${b0}+$frac*(t-$a0)\\,")
+        for (i in 1 until anchors.size) {
+            val (time, center) = anchors[i]
+            val previous = anchors[i - 1]
+            val rate = "(" + center + "-" + previous.second + ")/max(0.001\\,(" + time + "-" + previous.first + "))"
+            expr.append("if(lt(t\\," + time + ")\\," + previous.second + "+" + rate + "*(t-" + previous.first + ")\\,")
         }
-        expr.append("${anchors.last().second}")
-        repeat(anchors.size - 2) { expr.append(")") }
-        expr.append(")")
+        expr.append(anchors.last().second)
+        repeat(anchors.size - 1) { expr.append(")") }
         return expr.toString()
     }
 
-    private fun buildInterpolatedYExpression(points: List<FocusPoint>, durationSec: Double, cropHeightExpr: String): String =
-        buildInterpolatedXExpression(points, durationSec, cropHeightExpr, horizontal = false)
-
-    private fun buildSubtitleDraw(segments: List<SubtitleSegment>, style: SubtitleStyleConfig): String {
+    private fun buildSubtitleDraw(segments: List<SubtitleSegment>, style: SubtitleStyleConfig, clipStartMs: Long, clipDurationMs: Long): String {
         val drawtexts = segments.map { seg ->
             val text = seg.words.joinToString(" ")
                 .replace("'", "\\\\'")
                 .replace(":", "\\:")
                 .replace(",", "\\,")
-            val start = seg.startMs / 1000.0
-            val end = seg.endMs / 1000.0
+            val start = ((seg.startMs - clipStartMs).coerceAtLeast(0L) / 1000.0).coerceAtMost(clipDurationMs / 1000.0)
+            val end = ((seg.endMs - clipStartMs).coerceAtLeast(0L) / 1000.0).coerceAtMost(clipDurationMs / 1000.0)
             val size = style.fontSizePx
             val y = "(h*${style.positionPercent}/100)-n*${size / 8}"
             val color = "white@0.95"
