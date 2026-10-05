@@ -79,7 +79,7 @@ class AnalysisWorker @AssistedInject constructor(
                 }
                 is AnalysisOutcome.Cancelled -> {
                     projectRepository.updateAnalysisState(projectId, "cancelled", currentProgress())
-                    Result.failure(workDataOf(WorkKeys.ERROR to "Análise cancelada."))
+                    throw CancellationException("Análise cancelada.")
                 }
                 is AnalysisOutcome.Failed -> {
                     val canRetry = runAttemptCount < MAX_RETRIES && isTransient(outcome.message)
