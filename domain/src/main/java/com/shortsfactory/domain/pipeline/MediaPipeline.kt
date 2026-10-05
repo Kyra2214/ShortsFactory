@@ -143,11 +143,17 @@ class MediaAnalysisPipeline(
 
             return AnalysisOutcome.Success(transcript, result.copy(candidates = withFocus), withFocus)
         } catch (ce: CancellationException) {
-            currentStage?.let { update(it, StageState.CANCELLED, message = "Análise cancelada.") }
+            currentStage?.let { failed ->
+                update(failed, StageState.CANCELLED, message = "Análise cancelada.")
+                cancelPendingStages(failed, update)
+            }
             return AnalysisOutcome.Cancelled
         } catch (e: Exception) {
             val message = e.message ?: "Erro desconhecido"
-            currentStage?.let { update(it, StageState.FAILED, message = message) }
+            currentStage?.let { failed ->
+                update(failed, StageState.FAILED, message = message)
+                cancelPendingStages(failed, update, "Ignorada porque uma etapa anterior falhou.")
+            }
             return AnalysisOutcome.Failed("Falha em ${currentStage?.label ?: "etapa desconhecida"}: $message")
         }
     }
@@ -159,6 +165,17 @@ class MediaAnalysisPipeline(
         "60s" -> DurationPreset.SixtySeconds.maxMs
         "90s" -> DurationPreset.NinetySeconds.maxMs
         else -> null
+    }
+
+    private suspend fun cancelPendingStages(
+        failedStage: PipelineStage,
+        update: suspend (PipelineStage, StageState, Float, String?) -> Unit,
+        message: String = "Ignorada porque a análise foi cancelada."
+    ) {
+        val index = PipelineStage.values().indexOf(failedStage)
+        PipelineStage.values().drop(index + 1).forEach { stage ->
+            update(stage, StageState.CANCELLED, 0f, message)
+        }
     }
 
     private fun validateInput(videoPath: String): InputVideoInfo {
