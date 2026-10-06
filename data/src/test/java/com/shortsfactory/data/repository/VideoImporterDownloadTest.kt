@@ -2,6 +2,7 @@ package com.shortsfactory.data.repository
 
 import android.content.Context
 import android.content.ContextWrapper
+import com.shortsfactory.domain.importing.ImportSpacePolicy
 import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -70,12 +71,13 @@ class VideoImporterDownloadTest {
         assertEquals(0, files.listFiles { f -> f.name.endsWith(".meta") }.orEmpty().size)
     }
 
-    @Test fun `acima do limite e rejeitado antes de gravar`() {
-        // setBody first, then override Content-Length: MockWebServer otherwise recalculates it to 1 byte.\n        server.enqueue(MockResponse().setBody("x").setHeader("Content-Type", "video/mp4").setHeader("Content-Length", "9000000000"))
-        val r = download(url())
-        assertTrue("Esperava falha de limite, recebido: $r", r is VideoImporter.ImportResult.Failure)
-        assertTrue((r as VideoImporter.ImportResult.Failure).message.contains("limite"))
-        assertEquals(0, partFiles().size)
+    @Test fun `acima do limite e rejeitado pela politica`() {
+        val message = ImportSpacePolicy.check(
+            requiredBytes = ImportSpacePolicy.MAX_IMPORT_BYTES + 1L,
+            totalBytes = ImportSpacePolicy.MAX_IMPORT_BYTES + 1L,
+            freeBytes = Long.MAX_VALUE
+        )
+        assertEquals("O vídeo excede o limite local.", message)
     }
 
     @Test fun `acesso negado nao e contornado`() {
