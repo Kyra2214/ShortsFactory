@@ -1,5 +1,6 @@
 package com.shortsfactory.export
 
+import android.content.Intent
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -35,11 +36,32 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import com.shortsfactory.core.ui.SfSectionTitle
+import com.shortsfactory.domain.export.PlatformMetadata
+import com.shortsfactory.domain.export.PlatformSuggestion
+import com.shortsfactory.domain.export.PlatformProfiles
 import com.shortsfactory.domain.model.ExportPlatform
 import com.shortsfactory.domain.model.ExportQuality
 import com.shortsfactory.domain.model.ResolutionPreset
+
+/** Textos de publicação de um Short; `fromAi = false` = só título e gancho (sem IA). */
+data class ShortMetadataUi(
+    val shortId: Long,
+    val title: String,
+    val items: List<PlatformMetadata>,
+    val fromAi: Boolean
+)
+
+/** Plataformas sugeridas pela IA para um Short, cada uma com justificativa. */
+data class ShortSuggestionUi(
+    val shortId: Long,
+    val title: String,
+    val items: List<PlatformSuggestion>
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -48,10 +70,17 @@ fun ExportScreen(
     shortsCount: Int,
     progress: com.shortsfactory.domain.model.BatchExportProgress?,
     error: String? = null,
-    onExport: (platforms: List<String>, quality: String, resolution: String, fps: Int) -> Unit,
+    metadata: List<ShortMetadataUi> = emptyList(),
+    metadataBusy: Boolean = false,
+    onGenerateMetadata: (platforms: List<String>) -> Unit = {},
+    suggestions: List<ShortSuggestionUi> = emptyList(),
+    suggestionsBusy: Boolean = false,
+    onSuggestPlatforms: () -> Unit = {},
+    onExport: (platforms: List<String>, quality: String, resolution: String, fps: Int, automatic: Boolean) -> Unit,
     onCancel: () -> Unit,
     onBack: () -> Unit
 ) {
+    var automatic by remember { mutableStateOf(true) }
     var platforms by remember { mutableStateOf(ExportPlatform.entries.map { it.key }.toSet()) }
     var quality by remember { mutableStateOf("Normal") }
     var resolution by remember { mutableStateOf(ResolutionPreset.FULL_HD.label) }
@@ -112,7 +141,7 @@ fun ExportScreen(
                             )
                         }
                         Button(
-                            onClick = { onExport(platforms.toList(), quality, resolution, fps) },
+                            onClick = { onExport(platforms.toList(), quality, resolution, fps, automatic) },
                             modifier = Modifier.fillMaxWidth().height(52.dp),
                             shape = MaterialTheme.shapes.medium,
                             enabled = shortsCount > 0
@@ -162,6 +191,33 @@ fun ExportScreen(
             }
 
             Spacer(Modifier.height(24.dp))
+            SfSectionTitle("Modo")
+            ChipRow {
+                FilterChip(
+                    selected = automatic,
+                    onClick = { automatic = true },
+                    enabled = !isRunning,
+                    label = { Text("Automático") }
+                )
+                FilterChip(
+                    selected = !automatic,
+                    onClick = { automatic = false },
+                    enabled = !isRunning,
+                    label = { Text("Manual") }
+                )
+            }
+            Text(
+                text = if (automatic) {
+                    "Um arquivo por perfil de plataforma; plataformas com a mesma codificação compartilham o arquivo."
+                } else {
+                    "Um único arquivo com a qualidade, resolução e fps escolhidos abaixo."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 8.dp)
+            )
+
+            Spacer(Modifier.height(20.dp))
             SfSectionTitle("Plataformas")
             ChipRow {
                 ExportPlatform.entries.forEach { platform ->
@@ -176,6 +232,28 @@ fun ExportScreen(
                 }
             }
 
+            Spacer(Modifier.height(12.dp))
+            TextButton(
+                onClick = onSuggestPlatforms,
+                enabled = !isRunning && !suggestionsBusy && shortsCount > 0
+            ) {
+                Text(if (suggestionsBusy) "Consultando a IA..." else "Sugerir plataformas com IA")
+            }
+            suggestions.forEach { SuggestionCard(it) }
+            if (suggestions.any { it.items.isNotEmpty() }) {
+                TextButton(
+                    onClick = {
+                        platforms = suggestions.flatMap { sug -> sug.items.map { it.platform.key } }.toSet()
+                    },
+                    enabled = !isRunning
+                ) { Text("Aplicar sugestão às plataformas") }
+            }
+
+            if (automatic) {
+                Spacer(Modifier.height(20.dp))
+                SfSectionTitle("Perfis")
+                ProfileSummary(platforms)
+            } else {
             Spacer(Modifier.height(20.dp))
             SfSectionTitle("Qualidade")
             ChipRow {
@@ -215,6 +293,19 @@ fun ExportScreen(
                 }
             }
 
+            }
+
+            Spacer(Modifier.height(24.dp))
+            SfSectionTitle("Textos por plataforma")
+            Spacer(Modifier.height(8.dp))
+            TextButton(
+                onClick = { onGenerateMetadata(platforms.toList()) },
+                enabled = !isRunning && !metadataBusy && platforms.isNotEmpty() && shortsCount > 0
+            ) {
+                Text(if (metadataBusy) "Gerando textos..." else "Gerar títulos, descrições e hashtags")
+            }
+            metadata.forEach { MetadataCard(it) }
+
             Spacer(Modifier.height(24.dp))
             Text(
                 text = "A exportação ocorre 100% no dispositivo, sem envio a servidores externos. Cada Short recebe legendas embutidas e é salvo em Arquivos internos.",
@@ -225,6 +316,95 @@ fun ExportScreen(
         }
     }
 }
+
+@Composable
+private fun ProfileSummary(selected: Set<String>) {
+    PlatformProfiles.all().filter { it.platform.key in selected }.forEach { p ->
+        Surface(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+            shape = MaterialTheme.shapes.medium,
+            color = MaterialTheme.colorScheme.surfaceContainer
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Text(p.platform.label, style = MaterialTheme.typography.titleSmall)
+                Text(
+                    text = "${p.resolutionLabel} · ${p.fps} fps · ${p.videoBitrateBps / 1_000_000} Mbps · até ${p.maxDurationSec}s",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (!p.verified) {
+                    Text(
+                        text = "Valores de referência, ainda não conferidos na documentação oficial.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SuggestionCard(item: ShortSuggestionUi) {
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.surfaceContainer
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Text(item.title, style = MaterialTheme.typography.titleSmall)
+            item.items.forEach { s ->
+                Text(
+                    text = "${s.platform.label}: ${s.reason}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun MetadataCard(item: ShortMetadataUi) {
+    val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.surfaceContainer
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(item.title, style = MaterialTheme.typography.titleMedium)
+            if (!item.fromAi) {
+                Text(
+                    text = "Sem texto da IA: apenas título e gancho do corte.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            item.items.forEach { m ->
+                val text = metadataText(m)
+                Spacer(Modifier.height(12.dp))
+                Text(m.platform.label, style = MaterialTheme.typography.titleSmall)
+                Text(text, style = MaterialTheme.typography.bodyMedium)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = { clipboard.setText(AnnotatedString(text)) }) { Text("Copiar") }
+                    TextButton(onClick = {
+                        val send = Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(Intent.EXTRA_TEXT, text)
+                        }
+                        context.startActivity(Intent.createChooser(send, "Compartilhar texto").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    }) { Text("Compartilhar") }
+                }
+            }
+        }
+    }
+}
+
+private fun metadataText(m: PlatformMetadata): String =
+    listOf(m.title, m.description, m.hashtags.joinToString(" ")).filter { it.isNotBlank() }.joinToString("\n\n")
 
 @Composable
 private fun ChipRow(content: @Composable () -> Unit) {

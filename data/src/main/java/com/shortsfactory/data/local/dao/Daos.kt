@@ -2,6 +2,7 @@ package com.shortsfactory.data.local.dao
 
 import androidx.room.Dao
 import androidx.room.Insert
+import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Update
 import com.shortsfactory.data.local.entity.AIAnalysisEntity
@@ -9,6 +10,7 @@ import com.shortsfactory.data.local.entity.ExportBatchEntity
 import com.shortsfactory.data.local.entity.ExportEntity
 import com.shortsfactory.data.local.entity.ProjectEntity
 import com.shortsfactory.data.local.entity.ShortEntity
+import com.shortsfactory.data.local.entity.ShortPlatformMetadataEntity
 import com.shortsfactory.data.local.entity.SubtitleEntity
 import com.shortsfactory.data.local.entity.TranscriptEntity
 import kotlinx.coroutines.flow.Flow
@@ -189,4 +191,19 @@ interface ExportBatchDao {
 
     @Query("SELECT * FROM export_batches WHERE projectId = :projectId ORDER BY id DESC LIMIT 1")
     fun observeLatest(projectId: Long): Flow<ExportBatchEntity?>
+}
+
+@Dao
+interface ShortPlatformMetadataDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(entity: ShortPlatformMetadataEntity): Long
+
+    @Query("SELECT * FROM short_platform_metadata WHERE shortId = :shortId ORDER BY platform")
+    suspend fun getByShort(shortId: Long): List<ShortPlatformMetadataEntity>
+
+    @Query("SELECT * FROM short_platform_metadata WHERE shortId = :shortId ORDER BY platform")
+    fun observeByShort(shortId: Long): Flow<List<ShortPlatformMetadataEntity>>
+
+    @Query("DELETE FROM short_platform_metadata WHERE shortId = :shortId AND platform = :platform")
+    suspend fun delete(shortId: Long, platform: String)
 }

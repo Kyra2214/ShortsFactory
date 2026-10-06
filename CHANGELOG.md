@@ -1,5 +1,23 @@
 # Changelog
 
+## Fase 14 — Exportação por plataforma e metadados (7/7, CI pendente)
+- 14.7 Fechamento: `PlatformProfilesTest`, `ExportPlannerTest`, `PlatformMetadataTest`, `PlatformSelectorTest` (31 testes JVM), `FASE-14-CHECKLIST-APARELHO.md`, README. Suíte Gradle não executada no ambiente (sem Gradle/rede); validar na CI.
+- 14.6 Escolha de plataformas pela IA: `PlatformSelector`/`PlatformSuggestionParser` no `domain` (justificativa obrigatória, só plataformas candidatas que comportam a duração), `ExportViewModel.suggestPlatforms` e seção na tela. Não compilado/testado.
+- 14.5 Tela de exportação: modo Automático (padrão, um arquivo por perfil) e Manual, resumo dos perfis, geração/cópia/compartilhamento de textos por plataforma (fallback só título/gancho sem IA); ligação `ExportWorker` ← `ShortsWorkScheduler` ← `ExportViewModel`. Não compilado/testado.
+- 14.4 Metadados por plataforma: `PlatformMetadataGenerator`/`Validator`/`Parser` no `domain`, `AIProvider.generateText` roteado pelo `MultiAIProvider`, Room v6 aditivo (`short_platform_metadata`, `MIGRATION_5_6`, `PlatformMetadataRepository`). Não compilado/testado.
+- 14.3 Exportação por plataforma: `exportBatch(perPlatformProfiles)` gera um arquivo por perfil via `ExportPlanner` (arquivo, fingerprint e reuso por job); modo manual preservado como padrão. Não compilado/testado.
+- 14.2 `ExportPlanner` puro no `domain`: sem ampliar a origem, aviso de duração, arquivo compartilhado por perfis iguais (`ExportPlan`, `ExportFileGroup`). Não compilado/testado.
+- 14.1 Perfis por plataforma: `PlatformProfile`, `PlatformTextLimits` e `PlatformProfiles` no `domain`; valores não conferidos nas fontes oficiais (`verified = false`). Não compilado/testado.
+
+## Fase 13 — APIs gratuitas de IA (6/6, CI pendente)
+- 13.6 Fechamento: `FreeModelDiscoveryTest` (7) e `ProviderStatsTrackerTest` (8), README, `FASE-13-CHECKLIST-APARELHO.md`. Suíte Gradle não executada no ambiente (sem rede para o wrapper); validar na CI.
+- 13.5 Roteamento por estatística: `ProviderStatsTracker`/`ProviderRouting` no `domain`, `MultiAIProvider` com `routing` opcional (sucesso, falha, latência, quarentena), estatísticas persistidas em `FreeApisAIProvider`. Não compilado/testado.
+- 13.4 `FreeApiProvider` + `FreeApisAIProvider` (provedores com chave salva) no `AiModule`; `FreeModelDiscovery` no `domain` (descoberta e seleção de modelos gratuitos); `ChatProviderConfig.modelResolver` opcional. Não compilado/testado.
+- 13.3 Tela de cadastro: `FreeApiSettingsScreen`, `ApiCatalogLoader`, `FreeApiKeyTester`, rota `free_api_settings` e cartão "APIs gratuitas" nos Ajustes (cadastrar-se, docs, testar e salvar, remover; aviso de envio externo, reforçado nos chineses). Não compilado/testado.
+- 13.2 Chaves por provedor: `SecureKeyStore` ganha `getProviderKeys`/`saveProviderKeys`/`hasProviderKey`/`clearProviderKeys`/`configuredProviderIds` (criptografado, ID normalizado, lista vazia desliga o provedor). Não compilado/testado.
+- 13.1 Catálogo: `ai_api_catalog.json` (10 provedores) em `feature-ai`, `ApiCatalog`/`ApiCatalogParser` no `domain` (só modelos gratuitos, HTTPS, IDs únicos, entradas inválidas descartadas) e `ApiCatalogParserTest` (11 testes). Não compilado/testado.
+- Roadmap: Fases 13 (APIs gratuitas) e 14 (exportação por plataforma e metadados, planejada) adicionadas.
+
 ## Fase 12 — Leitor de vídeo interno (5/5, CI aprovada)
 - 12.5 Fechamento: `PreviewClipRange`, `PlayablePath.isInside`, 12 testes JVM novos, `clipEndMs` opcional no `SfVideoPlayer` e checklist em aparelho (`docs/fases/FASE-12-CHECKLIST-APARELHO.md`).
 - 12.4 Assistir exportados: `CandidateUi.exportedPath`, botão "Assistir exportado" nos cortes concluídos e diálogo com `SfVideoPlayer` em `ProjectScreen`.

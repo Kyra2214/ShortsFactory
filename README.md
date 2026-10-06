@@ -17,13 +17,13 @@ As Fases 11 e 12 estão na branch `feature/phase12-video-preview` e no [PR #4](h
 | `app` | Activity, composição Hilt, workers do WorkManager e navegação Compose |
 | `core` | Armazenamento seguro das chaves |
 | `domain` | Modelos, contratos, validação de mídia e pipeline independente de Android |
-| `data` | Room versão 5, migrações, DAOs, repositórios, importação e transcrição |
+| `data` | Room versão 6, migrações, DAOs, repositórios, importação e transcrição |
 | `video-engine` | FFmpeg/ffprobe local, extração/divisão de áudio, filtros e tracking facial |
 | `feature-projects` | Lista de projetos, análise, estados, progresso, cancelamento e reprodução dos cortes exportados |
 | `feature-editor` | Edição de intervalos e metadata dos candidatos, com prévia rápida do trecho |
 | `feature-player` | Leitor de vídeo interno (Media3 ExoPlayer): `SfVideoPlayer`, `PlayablePath` |
-| `feature-export` | Fila de exportação, progresso e estados por plataforma; prévia fiel (`ClipPreviewManager`) |
-| `feature-ai` | Configuração do provedor Grok e da chave OpenAI de transcrição |
+| `feature-export` | Fila de exportação, progresso e estados por plataforma (modo Automático por perfil ou Manual), textos e sugestão de plataformas; prévia fiel (`ClipPreviewManager`) |
+| `feature-ai` | Configuração do provedor Grok e da chave OpenAI de transcrição; APIs gratuitas do catálogo (cadastro de chaves, descoberta de modelos, roteamento por estatística) |
 | `feature-settings` e `feature-trends` | Preferências e tendências da aplicação; cada card de tendência traz origem (`OFFICIAL_API`, `AI_INFERENCE`, `LINK_ONLY`) e métricas só aparecem com origem oficial |
 
 A ordem de dependências evita ciclos: `app` compõe os módulos, `data` depende de `domain`, `core` e `video-engine`, e as features dependem somente dos contratos e serviços necessários para suas responsabilidades.
@@ -37,6 +37,16 @@ Para habilitar a integração, abra a tela de configurações de IA, informe a c
 A API aceita arquivos de até 25 MB. Para arquivos maiores, o app extrai o áudio localmente e cria fragmentos inicialmente de dez minutos. Cada fragmento é verificado; se ainda ultrapassar 25 MB, a duração é reduzida progressivamente até o limite mínimo configurado. Os timestamps dos fragmentos são recompostos usando a duração real observada por `ffprobe`, e os temporários são removidos ao final, inclusive quando há erro.
 
 > A integração OpenAI exige uma chave válida e conexão de rede. Nenhuma chave real é necessária para compilar ou executar os testes automatizados. Custos, retenção e políticas de dados da API devem ser avaliados pelo proprietário da chave conforme a documentação do provedor.
+
+## APIs gratuitas de IA (opcional)
+
+Em Ajustes → APIs gratuitas, o usuário cadastra chaves de provedores com plano gratuito (catálogo `ai_api_catalog.json`, 10 provedores). Cada provedor fica desligado até uma chave ser validada e salva (`SecureKeyStore`, criptografado). A lista de modelos vem da API do provedor em tempo de execução (só modelos gratuitos quando há preço; no máximo 5 por chave) e o roteamento entre provedores usa estatística de sucesso, latência e quarentena após falhas. A transcrição do vídeo é enviada ao provedor escolhido e sai do aparelho (provedores da China exigem atenção extra). Provedores gratuitos não têm busca de tendências ao vivo. A ordem automática é OpenAI, xAI e, por último, as APIs gratuitas.
+
+## Exportação por plataforma e textos de publicação
+
+Na tela de exportação, o modo **Automático** (padrão) gera um arquivo por perfil de plataforma (`PlatformProfiles`: YouTube Shorts, Instagram Reels, TikTok, Facebook Reels); o `ExportPlanner` nunca amplia a origem, avisa quando o corte passa da duração máxima e faz perfis com a mesma codificação compartilharem o arquivo. O modo **Manual** mantém um único arquivo com qualidade, resolução e fps escolhidos. Os valores dos perfis ainda estão marcados como **não verificados** (`verified = false`) até serem conferidos nas documentações oficiais.
+
+Com um provedor de IA configurado, o app gera título, descrição e hashtags por plataforma (limites do perfil aplicados, salvos em Room v6) e sugere em quais plataformas cada corte rende melhor, com justificativa; sem IA, mostra só título e gancho do corte, sem inventar texto. O app prepara arquivo e textos (copiar/compartilhar) mas não publica nas plataformas.
 
 ## Vídeo, validação e foco facial
 
@@ -67,7 +77,7 @@ Os comandos principais são:
 ./gradlew :domain:test test lint assembleDebug assembleRelease --stacktrace --no-daemon --max-workers=1
 ```
 
-A suíte JVM cobre importação (políticas de espaço/Range/extensão e download com `MockWebServer`), seleção de candidatos, sucesso/falha/cancelamento do pipeline, codec e parser de transcript, parser de `ffprobe`, validação de mídia, repositórios, transições persistentes de exportação e o `ShortsProcessingManager` (falha parcial, reuso, intervalo editado e cancelamento, com DAOs falsos). O teste instrumentado `ShortsDatabaseMigrationTest` verifica as migrações Room `1 → 2 → 3 → 4 → 5` (FKs, órfãos e cascata), defaults e preservação de registros em SQLite real:
+A suíte JVM cobre importação (políticas de espaço/Range/extensão e download com `MockWebServer`), seleção de candidatos, sucesso/falha/cancelamento do pipeline, codec e parser de transcript, parser de `ffprobe`, validação de mídia, repositórios, transições persistentes de exportação e o `ShortsProcessingManager` (falha parcial, reuso, intervalo editado e cancelamento, com DAOs falsos). O teste instrumentado `ShortsDatabaseMigrationTest` verifica as migrações Room `1 → 2 → 3 → 4 → 5 → 6` (FKs, órfãos e cascata), defaults e preservação de registros em SQLite real:
 
 ```bash
 ./gradlew :data:connectedDebugAndroidTest --stacktrace --no-daemon --max-workers=1

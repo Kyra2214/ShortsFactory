@@ -15,6 +15,8 @@ import com.shortsfactory.domain.export.ExportBatchResult
 import com.shortsfactory.domain.export.ExportBatchState
 import com.shortsfactory.domain.export.ExportFileNaming
 import com.shortsfactory.domain.export.ExportOutputValidator
+import com.shortsfactory.domain.export.ExportPlanRequest
+import com.shortsfactory.domain.export.ExportPlanner
 import com.shortsfactory.domain.model.BatchExportProgress
 import com.shortsfactory.domain.model.ExportPlatform
 import com.shortsfactory.domain.model.ExportQuality
@@ -53,6 +55,8 @@ class ShortsProcessingManager @Inject constructor(
      * Exporta em lote. Cancelar o coroutine que chama este método (WorkManager, `Job`) é a ÚNICA forma de
      * cancelar: o processo ffmpeg do item em andamento morre junto e o item fica `cancelled` (nunca `failed`).
      *
+     * @param perPlatformProfiles `true` gera um arquivo por perfil de plataforma ([ExportPlanner]; plataformas com a mesma
+     *   codificação compartilham o arquivo); `false` mantém o modo manual (um arquivo com resolução/qualidade/fps escolhidos).
      * @param cancelledByUser distingue cancelamento do usuário de parada do sistema (restrições, preempção):
      *   só o primeiro grava `cancelled`; a parada do sistema deixa o item `queued`, pois o WorkManager reagenda.
      */
@@ -64,6 +68,7 @@ class ShortsProcessingManager @Inject constructor(
         fps: Int,
         subtitleStyle: String = SubtitleStyle.Creator.key,
         cancelledByUser: () -> Boolean = { true },
+        perPlatformProfiles: Boolean = false,
         onProgress: (BatchExportProgress) -> Unit
     ): ExportBatchResult {
         val project = projectRepository.getById(projectId)
@@ -87,8 +92,31 @@ class ShortsProcessingManager @Inject constructor(
             "Não há espaço livre suficiente para exportar os Shorts."
         }
 
+        val jobs = if (perPlatformProfiles) {
+            val unknownSource = project.videoWidth <= 0 || project.videoHeight <= 0
+            ExportPlanner.plan(
+                ExportPlanRequest(
+                    sourceWidth = if (unknownSource) UNKNOWN_SOURCE_WIDTH else project.videoWidth,
+                    sourceHeight = if (unknownSource) UNKNOWN_SOURCE_HEIGHT else project.videoHeight,
+                    clipDurationSec = 1.0,
+                    platforms = platformKeys.mapNotNull { key -> ExportPlatform.entries.firstOrNull { it.key == key } }
+                )
+            ).fileGroups.map { g ->
+                ExportJob(
+                    g.platforms.joinToString(",") { it.key }, PROFILE_QUALITY, "${g.width}x${g.height}",
+                    g.width, g.height, g.fps, g.videoBitrateBps
+                )
+            }
+        } else {
+            listOf(
+                ExportJob(
+                    platformKey, selectedQuality.name, selectedResolution.label,
+                    targetWidth, targetHeight, safeFps, selectedQuality.videoBitrateBps
+                )
+            )
+        }
         val style = resolveSubtitleStyle(subtitleStyle)
-        val total = candidates.size
+        val total = candidates.size * jobs.size
         var completed = 0
         var doneCount = 0
         var failedCount = 0
@@ -97,6 +125,7 @@ class ShortsProcessingManager @Inject constructor(
 
         try {
             for (candidate in candidates) {
+            for (job in jobs) {
                 currentCoroutineContext().ensureActive()
 
                 val validInterval = candidate.startMs >= 0L &&
@@ -113,12 +142,12 @@ class ShortsProcessingManager @Inject constructor(
 
                 val fingerprint = ExportFileNaming.fingerprint(
                     candidate.startMs, candidate.endMs, candidate.intervalVersion,
-                    platformKey, selectedQuality.name, selectedResolution.label, safeFps, style.styleKey
+                    job.platformKey, job.quality, job.resolutionLabel, job.fps, style.styleKey
                 )
                 val outputFile = File(
                     outputDir,
                     ExportFileNaming.fileName(
-                        candidate.id, platformKey, selectedQuality.name, selectedResolution.label, safeFps, fingerprint
+                        candidate.id, job.platformKey, job.quality, job.resolutionLabel, job.fps, fingerprint
                     )
                 )
                 val partFile = File(outputDir, ExportFileNaming.partName(outputFile.name))
@@ -126,16 +155,16 @@ class ShortsProcessingManager @Inject constructor(
                 val existing = exportRepository.getLatestForShort(
                     projectId = projectId,
                     shortId = candidate.id,
-                    platform = platformKey,
-                    quality = selectedQuality.name,
-                    resolution = selectedResolution.label,
-                    fps = safeFps
+                    platform = job.platformKey,
+                    quality = job.quality,
+                    resolution = job.resolutionLabel,
+                    fps = job.fps
                 )
                 if (existing?.status == "done" && existing.outputPath == outputPath && outputFile.isFile && outputFile.length() > 0L) {
                     // O fingerprint está no nome do arquivo: nome igual = intervalo e parâmetros iguais.
                     val reusable = try {
                         ExportOutputValidator.validate(
-                            videoEngine.probe(outputPath), targetWidth, targetHeight, candidate.endMs - candidate.startMs
+                            videoEngine.probe(outputPath), job.width, job.height, candidate.endMs - candidate.startMs
                         ) == null
                     } catch (ce: CancellationException) {
                         throw ce
@@ -158,10 +187,10 @@ class ShortsProcessingManager @Inject constructor(
                     ExportEntity(
                         projectId = projectId,
                         shortId = candidate.id,
-                        platform = platformKey,
-                        quality = selectedQuality.name,
-                        resolution = selectedResolution.label,
-                        fps = safeFps,
+                        platform = job.platformKey,
+                        quality = job.quality,
+                        resolution = job.resolutionLabel,
+                        fps = job.fps,
                         status = "queued"
                     )
                 )
@@ -172,8 +201,8 @@ class ShortsProcessingManager @Inject constructor(
                     exportRepository.markRunning(exportId)
                     shortRepository.updateExportProgress(candidate.id, "processing", 0f)
                     val clipSpec = assembleClipSpec(
-                        project, candidate, partFile.absolutePath, targetWidth, targetHeight,
-                        safeFps, selectedQuality.videoBitrateBps, style
+                        project, candidate, partFile.absolutePath, job.width, job.height,
+                        job.fps, job.bitrateBps, style
                     )
                     coroutineScope {
                         val progressUpdates = Channel<Float>(Channel.CONFLATED)
@@ -203,7 +232,7 @@ class ShortsProcessingManager @Inject constructor(
                         "O FFmpeg não gerou um arquivo de saída válido."
                     }
                     val outputInfo = videoEngine.probe(partFile.absolutePath)
-                    ExportOutputValidator.validate(outputInfo, targetWidth, targetHeight, candidate.endMs - candidate.startMs)
+                    ExportOutputValidator.validate(outputInfo, job.width, job.height, candidate.endMs - candidate.startMs)
                         ?.let { error(it) }
                     Files.move(partFile.toPath(), outputFile.toPath(), StandardCopyOption.ATOMIC_MOVE)
                     exportRepository.markDone(exportId, outputPath)
@@ -243,6 +272,7 @@ class ShortsProcessingManager @Inject constructor(
                     exportBatchRepository.record(batchId, projectId, doneCount, failedCount, 0, ExportBatchState.RUNNING)
                     onProgress(BatchExportProgress(total, completed, 0f, isRunning = true))
                 }
+            }
             }
         } catch (ce: CancellationException) {
             withContext(NonCancellable) {
@@ -331,7 +361,20 @@ class ShortsProcessingManager @Inject constructor(
         )
     }
 
+    private data class ExportJob(
+        val platformKey: String,
+        val quality: String,
+        val resolutionLabel: String,
+        val width: Int,
+        val height: Int,
+        val fps: Int,
+        val bitrateBps: Long
+    )
+
     companion object {
+        private const val PROFILE_QUALITY = "Perfil"
+        private const val UNKNOWN_SOURCE_WIDTH = 4320
+        private const val UNKNOWN_SOURCE_HEIGHT = 7680
         private const val TAG = "ShortsProcessingManager"
         private const val PROGRESS_WRITE_INTERVAL_MS = 1_000L
         private const val MIN_FREE_SPACE_BYTES = 100L * 1024L * 1024L

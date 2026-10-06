@@ -33,6 +33,7 @@ class ExportWorker @AssistedInject constructor(
         val resolution = inputData.getString(WorkKeys.RESOLUTION).orEmpty().ifBlank { "1080 × 1920" }
         val fps = inputData.getInt(WorkKeys.FPS, 30)
         val subtitleStyle = inputData.getString(WorkKeys.SUBTITLE_STYLE).orEmpty().ifBlank { "creator" }
+        val perPlatform = inputData.getBoolean(WorkKeys.PER_PLATFORM, false)
 
         // Serviço em primeiro plano; se o sistema não permitir iniciá-lo agora, segue sem ele.
         try {
@@ -49,6 +50,7 @@ class ExportWorker @AssistedInject constructor(
                 resolution = resolution,
                 fps = fps,
                 subtitleStyle = subtitleStyle,
+                perPlatformProfiles = perPlatform,
                 cancelledByUser = { cancelledByApp() },
                 onProgress = { progress -> persistProgress(progress) }
             )

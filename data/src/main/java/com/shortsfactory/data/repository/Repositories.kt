@@ -5,6 +5,7 @@ import com.shortsfactory.data.local.dao.ExportBatchDao
 import com.shortsfactory.data.local.dao.ExportDao
 import com.shortsfactory.data.local.dao.ProjectDao
 import com.shortsfactory.data.local.dao.ShortDao
+import com.shortsfactory.data.local.dao.ShortPlatformMetadataDao
 import com.shortsfactory.data.local.dao.SubtitleDao
 import com.shortsfactory.data.local.dao.TranscriptDao
 import com.shortsfactory.data.local.entity.AIAnalysisEntity
@@ -12,9 +13,12 @@ import com.shortsfactory.data.local.entity.ExportBatchEntity
 import com.shortsfactory.data.local.entity.ExportEntity
 import com.shortsfactory.data.local.entity.ProjectEntity
 import com.shortsfactory.data.local.entity.ShortEntity
+import com.shortsfactory.data.local.entity.ShortPlatformMetadataEntity
 import com.shortsfactory.data.local.entity.SubtitleEntity
 import com.shortsfactory.data.local.entity.TranscriptEntity
 import com.shortsfactory.domain.export.ExportBatchState
+import com.shortsfactory.domain.export.PlatformMetadata
+import com.shortsfactory.domain.model.ExportPlatform
 import com.shortsfactory.domain.model.AIAnalysisResult
 import com.shortsfactory.domain.model.ShortCandidate
 import com.shortsfactory.domain.model.SubtitleSegment
@@ -300,6 +304,29 @@ class ExportBatchRepository(private val dao: ExportBatchDao) {
     suspend fun record(id: Long, projectId: Long, completed: Int, failed: Int, cancelled: Int, state: String) {
         val current = dao.getLatest(projectId)?.takeIf { it.id == id } ?: return
         dao.update(current.copy(completed = completed, failed = failed, cancelled = cancelled, state = state, updatedAtMs = System.currentTimeMillis()))
+    }
+}
+
+class PlatformMetadataRepository(private val dao: ShortPlatformMetadataDao) {
+    suspend fun save(shortId: Long, items: List<PlatformMetadata>) {
+        items.forEach { m ->
+            dao.upsert(
+                ShortPlatformMetadataEntity(
+                    shortId = shortId, platform = m.platform.key, title = m.title, description = m.description,
+                    hashtagsJson = kotlinx.serialization.json.JsonArray(m.hashtags.map { kotlinx.serialization.json.JsonPrimitive(it) }).toString()
+                )
+            )
+        }
+    }
+
+    suspend fun get(shortId: Long): List<PlatformMetadata> = dao.getByShort(shortId).mapNotNull { it.toDomain() }
+
+    suspend fun delete(shortId: Long, platform: ExportPlatform) = dao.delete(shortId, platform.key)
+
+    private fun ShortPlatformMetadataEntity.toDomain(): PlatformMetadata? {
+        val p = ExportPlatform.entries.firstOrNull { it.key == platform } ?: return null
+        val tags = runCatching { Json.parseToJsonElement(hashtagsJson).jsonArray.map { it.jsonPrimitive.content } }.getOrDefault(emptyList())
+        return PlatformMetadata(p, title, description, tags)
     }
 }
 
