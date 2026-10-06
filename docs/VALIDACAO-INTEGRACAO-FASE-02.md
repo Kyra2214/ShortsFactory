@@ -63,8 +63,10 @@ As execuções anteriores do PR terminaram como canceladas antes de iniciar qual
 - Revalidação local após as correções: `:domain:test` **PASSOU**, 139 testes, 0 falhas. `:data:testDebugUnitTest`, lint/R8, APKs e instrumentação não podem ser executados no sandbox sem Android SDK.
 - [Run 37405626211](https://github.com/Kyra2214/ShortsFactory/actions/runs/37405626211): job principal passou; a instrumentação falhou antes de iniciar testes. O AVD `disk-size: 4G` foi configurado, mas o emulador fatalizou com `Not enough space to create userdata partition`: 7069.65 MB disponíveis, 7372.80 MB necessários. Os logs mostram que `emulator-5554` nunca foi criado; não é falha Room.
 - O workflow agora libera somente os diretórios NDK pré-instalados (`$ANDROID_HOME/ndk` e `ndk-bundle`) antes do emulador, imprime `df -h /` antes/depois e mantém Android SDK, platform-tools e imagem API 35. A [imagem oficial ubuntu-24.04](https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2404-Readme.md) documenta o NDK em `/usr/local/lib/android/sdk/ndk/`; a busca de configuração Gradle não encontrou `ndkVersion`, CMake, `ndkBuild` ou `externalNativeBuild`. A nova validação do emulador está pendente.
+- A correção de espaço foi confirmada no commit `394c182`: tanto o [run automático do PR 37437160979](https://github.com/Kyra2214/ShortsFactory/actions/runs/37437160979) quanto o [run manual 37437183782](https://github.com/Kyra2214/ShortsFactory/actions/runs/37437183782) concluíram com sucesso. O job principal aprovou testes JVM, lint debug/release, builds APK e checksums; no emulador API 35, `:data:connectedDebugAndroidTest` executou e passou **9 testes** de Room/migração (`BUILD SUCCESSFUL`).
+- O passo de upload de relatórios registrou quota de artefatos esgotada; como os uploads são configurados como não bloqueantes, ambos os workflows mantiveram conclusão `success`. Os relatórios binários podem não estar disponíveis para download no GitHub.
 
-**Reexecução após as correções de fixture, timeout, API 31 e espaço do runner:** pendente; o próximo run precisa confirmar testes JVM, lint, builds APK e instrumentação Room.
+**Status de CI:** verde no commit `394c182` nos dois runs acima. A validação em dispositivo arm64 real e a retomada do upload de artefatos quando a quota do GitHub for liberada permanecem pendências separadas.
 
 ## Limites e pendências
 

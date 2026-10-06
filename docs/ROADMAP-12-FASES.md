@@ -1,6 +1,6 @@
 # Roadmap de implementação — 12 fases
 
-> **Estado atual (integração das Fases 2–10):** implementação em revisão no [PR #3](https://github.com/Kyra2214/ShortsFactory/pull/3). A validação local passou em `:domain:test` (139 testes, 0 falhas) e nas 5 verificações de crop com FFmpeg real. As correções de fixture, timeout e API 31 passaram os gates principais; a instrumentação Room ainda não iniciou porque o AVD ficou sem espaço (7069.65 MB livres, 7372.80 MB exigidos). O job agora remove NDK pré-instalado não utilizado e aguarda nova CI. A validação em aparelho arm64 continua pendente.
+> **Estado atual (integração das Fases 2–10):** PR #3 está verde no commit `394c182`: testes JVM, lint debug/release, builds APK e 9 testes instrumentados Room no emulador API 35 passaram nos runs [automático](https://github.com/Kyra2214/ShortsFactory/actions/runs/37437160979) e [manual](https://github.com/Kyra2214/ShortsFactory/actions/runs/37437183782). O job libera espaço removendo somente NDK pré-instalado não utilizado. A quota de artefatos do GitHub impede o upload de relatórios, sem bloquear CI. A validação FFmpeg arm64 em aparelho real continua pendente.
 >
 > **Fonte operacional:** `docs/VALIDACAO-INTEGRACAO-FASE-02.md` e os relatórios em `docs/fases/`. `docs/AUDITORIA-E-FASES.md` é uma auditoria estática histórica de um snapshot anterior; não representa sozinha o estado atual.
 
