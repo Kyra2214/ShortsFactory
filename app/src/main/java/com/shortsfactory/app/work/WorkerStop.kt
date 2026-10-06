@@ -1,5 +1,6 @@
 package com.shortsfactory.app.work
 
+import android.os.Build
 import androidx.work.ListenableWorker
 import androidx.work.WorkInfo
 
@@ -10,4 +11,5 @@ import androidx.work.WorkInfo
  * nunca "cancelado".
  */
 internal fun ListenableWorker.cancelledByApp(): Boolean =
-    stopReason == WorkInfo.STOP_REASON_CANCELLED_BY_APP
+    Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+        stopReason == WorkInfo.STOP_REASON_CANCELLED_BY_APP
