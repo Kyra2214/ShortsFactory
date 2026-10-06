@@ -1,6 +1,6 @@
 # Roadmap de implementação — 12 fases
 
-> **Estado atual (integração das Fases 2–10):** implementação em revisão no [PR #3](https://github.com/Kyra2214/ShortsFactory/pull/3). A validação local passou em `:domain:test` (139 testes, 0 falhas) e nas 5 verificações de crop com FFmpeg real. O primeiro run deste PR detectou um fixture incorreto em `VideoImporterDownloadTest` (Content-Length redefinido por `setBody`); corrigido, aguardando reexecução. A validação em aparelho arm64 continua pendente.
+> **Estado atual (integração das Fases 2–10):** implementação em revisão no [PR #3](https://github.com/Kyra2214/ShortsFactory/pull/3). A validação local passou em `:domain:test` (139 testes, 0 falhas) e nas 5 verificações de crop com FFmpeg real. As correções de fixture, timeout e API 31 passaram os gates principais; a instrumentação Room ainda não iniciou porque o AVD ficou sem espaço (7069.65 MB livres, 7372.80 MB exigidos). O job agora remove NDK pré-instalado não utilizado e aguarda nova CI. A validação em aparelho arm64 continua pendente.
 >
 > **Fonte operacional:** `docs/VALIDACAO-INTEGRACAO-FASE-02.md` e os relatórios em `docs/fases/`. `docs/AUDITORIA-E-FASES.md` é uma auditoria estática histórica de um snapshot anterior; não representa sozinha o estado atual.
 

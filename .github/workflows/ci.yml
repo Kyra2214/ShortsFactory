@@ -108,6 +108,13 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
+      - name: Reclaim unused Android NDK disk space
+        run: |
+          df -h /
+          : "${ANDROID_HOME:?ANDROID_HOME is required}"
+          sudo rm -rf -- "$ANDROID_HOME/ndk" "$ANDROID_HOME/ndk-bundle"
+          df -h /
+
       - name: Run Room migration checks on API 35
         uses: reactivecircus/android-emulator-runner@v2
         with:
