@@ -52,7 +52,7 @@ import java.io.File
  * Leitor interno para arquivos do app (vídeo importado, prévias e Shorts exportados).
  * Controles próprios em Compose; o vídeo é desenhado por [PlayerView] sem controlador.
  */
-@OptIn(UnstableApi::class)
+@UnstableApi
 @Composable
 fun SfVideoPlayer(
     filePath: String,
