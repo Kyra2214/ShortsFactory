@@ -55,8 +55,8 @@ jobs:
       - name: Run all JVM unit tests
         run: ./gradlew :domain:test testDebugUnitTest --stacktrace --no-daemon --max-workers=2
 
-      - name: Run debug lint
-        run: ./gradlew lintDebug --stacktrace --no-daemon --max-workers=2
+      - name: Run debug and release lint
+        run: ./gradlew lintDebug lintRelease --stacktrace --no-daemon --max-workers=2
 
       - name: Assemble debug, release and Android test APKs
         run: ./gradlew assembleDebug assembleRelease :app:assembleDebugAndroidTest :data:assembleDebugAndroidTest --stacktrace --no-daemon --max-workers=2
@@ -108,6 +108,13 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
+      - name: Reclaim unused Android NDK disk space
+        run: |
+          df -h /
+          : "${ANDROID_HOME:?ANDROID_HOME is required}"
+          sudo rm -rf -- "$ANDROID_HOME/ndk" "$ANDROID_HOME/ndk-bundle"
+          df -h /
+
       - name: Run Room migration checks on API 35
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -115,8 +122,8 @@ jobs:
           target: google_apis
           arch: x86_64
           profile: pixel_2
-          # The hosted runner had 7.08 GB free, below the default 7.37 GB userdata requirement.
-          disk-size: 6G
+          # Keep userdata within the hosted runner's available disk space.
+          disk-size: 4G
           force-avd-creation: true
           emulator-boot-timeout: 1200
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none

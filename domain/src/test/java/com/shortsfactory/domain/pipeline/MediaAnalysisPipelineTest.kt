@@ -5,6 +5,7 @@ import com.shortsfactory.domain.model.AIAnalysisResult
 import com.shortsfactory.domain.model.ShortCandidate
 import com.shortsfactory.domain.model.TrendCard
 import com.shortsfactory.domain.model.Transcript
+import com.shortsfactory.domain.model.TranscriptSegment
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -33,7 +34,7 @@ class MediaAnalysisPipelineTest {
                 override suspend fun extract(videoPath: String, outputPath: String) = Unit
             },
             transcription = object : TranscriptionService {
-                override suspend fun transcribe(audioPath: String) = Transcript(emptyList())
+                override suspend fun transcribe(audioPath: String) = Transcript(listOf(TranscriptSegment(0L, 30_000L, "fala")))
             }
         )
 
@@ -55,7 +56,7 @@ class MediaAnalysisPipelineTest {
                 override suspend fun extract(videoPath: String, outputPath: String) = Unit
             },
             transcription = object : TranscriptionService {
-                override suspend fun transcribe(audioPath: String) = Transcript(emptyList())
+                override suspend fun transcribe(audioPath: String) = Transcript(listOf(TranscriptSegment(0L, 30_000L, "fala")))
             }
         )
 
@@ -77,7 +78,7 @@ class MediaAnalysisPipelineTest {
                 override suspend fun extract(videoPath: String, outputPath: String) = Unit
             },
             transcription = object : TranscriptionService {
-                override suspend fun transcribe(audioPath: String) = Transcript(emptyList())
+                override suspend fun transcribe(audioPath: String) = Transcript(listOf(TranscriptSegment(0L, 30_000L, "fala")))
             }
         )
 

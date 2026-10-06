@@ -2,13 +2,17 @@ package com.shortsfactory.video
 
 import com.shortsfactory.domain.pipeline.ClipSpec
 import com.shortsfactory.domain.pipeline.FfmpegFilterBuilder
+import com.shortsfactory.domain.pipeline.FfmpegCancelledException
+import com.shortsfactory.domain.pipeline.FfmpegFailedException
 import com.shortsfactory.domain.pipeline.FocusTrack
 import com.shortsfactory.domain.pipeline.FocusTrackBuilder
 import com.shortsfactory.domain.pipeline.FocusPoint
 import com.shortsfactory.domain.pipeline.InputVideoInfo
+import com.shortsfactory.domain.pipeline.ProcessRunner
 import com.shortsfactory.domain.pipeline.VideoEngine
 
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import com.google.mlkit.vision.common.InputImage
@@ -18,16 +22,11 @@ import com.google.mlkit.vision.face.FaceDetectorOptions
 
 import android.util.Log
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -39,24 +38,21 @@ import kotlin.coroutines.resumeWithException
  */
 class FfmpegVideoEngine constructor(private val appContext: Context) : VideoEngine {
 
+    /** Saída do ffmpeg só é logada em build debuggable; em release nada da saída vai para o logcat. */
+    private val logFfmpegOutput: Boolean =
+        (appContext.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
+
     private val workDir: File by lazy {
         File(appContext.cacheDir, "ffmpeg_work").apply { mkdirs() }
     }
 
-    @Volatile private var runningProcess: Process? = null
+    /** Serializa as execuções de ffmpeg (CPU/memória). Não guarda processo: o dono é o coroutine. */
     private val mutex = Mutex()
 
-    override fun cancel() {
-        runningProcess?.let { process ->
-            process.destroy()
-            if (process.isAlive) process.destroyForcibly()
-        }
-    }
+    // Não existe cancel() global: cancelar o Job do chamador encerra o processo dele (ver ProcessRunner).
 
-    override fun probe(path: String): InputVideoInfo {
-        val output = runBlocking(Dispatchers.IO) { runFfprobe(path) }
-        return parseProbeOutput(path, output)
-    }
+    override suspend fun probe(path: String): InputVideoInfo =
+        parseProbeOutput(path, runFfprobe(path))
 
     override suspend fun extractAudio(videoPath: String, outputPath: String) {
         val args = listOf(
@@ -136,6 +132,7 @@ class FfmpegVideoEngine constructor(private val appContext: Context) : VideoEngi
                 "-b:v", spec.bitrateBps.toString(),
                 "-c:a", FfmpegCodecs.AUDIO_ENCODER, "-b:a", FfmpegCodecs.AUDIO_BITRATE,
                 "-movflags", "+faststart",
+                "-f", "mp4",
                 spec.outputPath
             )
 
@@ -210,7 +207,7 @@ class FfmpegVideoEngine constructor(private val appContext: Context) : VideoEngi
         )
     }
 
-    override fun isAlreadyTargetFormat(
+    override suspend fun isAlreadyTargetFormat(
         path: String,
         target: com.shortsfactory.domain.model.ResolutionPreset,
         fps: Int
@@ -219,6 +216,8 @@ class FfmpegVideoEngine constructor(private val appContext: Context) : VideoEngi
         return try {
             val info = probe(path)
             info.width == target.width && info.height == target.height && info.fps.toInt() == fps
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             false
         }
@@ -275,88 +274,56 @@ class FfmpegVideoEngine constructor(private val appContext: Context) : VideoEngi
         return file.absolutePath
     }
 
+    /**
+     * Executa o ffmpeg preso ao coroutine chamador: cancelar o chamador mata ESTE processo e lança
+     * [CancellationException]. Falha de processo vira [FfmpegFailedException] (exit + final do stderr).
+     */
     private suspend fun runFfmpeg(
         args: List<String>,
         onProgress: (Float) -> Unit = {},
         timeoutMs: Long = TIMEOUT_MS,
         progressDurationMs: Long? = null
-    ): Unit = suspendCancellableCoroutine<Unit> { cont ->
-        var process: Process? = null
-        val job = CoroutineScope(Dispatchers.IO).launch {
-            try {
-                mutex.withLock {
-                    val cmd = (listOf(ffmpegPath()) + args).toTypedArray()
-                    process = ProcessBuilder(*cmd)
-                        .directory(workDir)
-                        .redirectErrorStream(true)
-                        .start()
-                    runningProcess = process
-                    val activeProcess = process ?: error("FFmpeg não foi iniciado.")
-                    val reader = async {
-                        activeProcess.inputStream.bufferedReader().useLines { lines ->
-                            for (line in lines) {
-                                val t = REGEX_TIME.find(line)?.groupValues?.get(1)
-                                if (t != null) {
-                                    val secs = parseHms(t)
-                                    val durationSeconds = progressDurationMs?.div(1000.0)
-                                    val p = if (durationSeconds != null && durationSeconds > 0.0) {
-                                        (secs / durationSeconds).toFloat()
-                                    } else {
-                                        0f
-                                    }.coerceIn(0f, 1f)
-                                    onProgress(p)
-                                }
-                                Log.d(TAG, line.take(200))
-                            }
-                        }
-                    }
-                    val waitJob = async(Dispatchers.IO) { activeProcess.waitFor() }
-                    val finished = withTimeoutOrNull(timeoutMs) { waitJob.await() }
-                    val exit = finished ?: run {
-                        activeProcess.destroyForcibly()
-                        waitJob.join()
-                        -1
-                    }
-                    reader.await()
-                    if (exit == 0) {
-                        if (cont.isActive) cont.resume(Unit)
-                    } else if (cont.isActive) {
-                        cont.resumeWithException(
-                            RuntimeException("FFmpeg falhou (exit $exit). Veja os logs do engine.")
-                        )
-                    }
+    ) {
+        val command = listOf(ffmpegPath()) + args
+        val durationSeconds = progressDurationMs?.takeIf { it > 0L }?.div(1000.0)
+        val result = mutex.withLock {
+            ProcessRunner.run(
+                command = command,
+                timeoutMs = timeoutMs,
+                directory = workDir,
+                tailFilter = { line -> !REGEX_TIME.containsMatchIn(line) }
+            ) { line ->
+                REGEX_TIME.find(line)?.groupValues?.get(1)?.let { time ->
+                    val progress = if (durationSeconds != null) (parseHms(time) / durationSeconds).toFloat() else 0f
+                    onProgress(progress.coerceIn(0f, 1f))
                 }
-            } catch (ce: CancellationException) {
-                process?.destroy()
-                process?.destroyForcibly()
-                throw ce
-            } catch (e: Exception) {
-                if (cont.isActive) cont.resumeWithException(e)
-            } finally {
-                if (runningProcess === process) runningProcess = null
+                if (logFfmpegOutput) Log.d(TAG, line.take(200))
             }
         }
-        cont.invokeOnCancellation {
-            process?.destroy()
-            process?.destroyForcibly()
-            job.cancel()
+        if (result.exitCode != 0) {
+            // O processo pode ter sido morto porque o dono foi cancelado entre o término e o retorno.
+            if (!currentCoroutineContext().isActive) throw FfmpegCancelledException()
+            throw FfmpegFailedException(result.exitCode, result.tail)
         }
     }
 
-    private suspend fun runFfprobe(path: String): String = withContext(Dispatchers.IO) {
-        val process = ProcessBuilder(
-            ffprobePath(),
-            "-v", "quiet",
-            "-print_format", "flat",
-            "-show_format", "-show_streams",
-            path
-        )
-            .redirectErrorStream(true)
-            .start()
-        val output = process.inputStream.bufferedReader().readText()
-        val exit = process.waitFor()
-        check(exit == 0) { "ffprobe falhou (exit $exit)." }
-        output
+    private suspend fun runFfprobe(path: String): String {
+        val output = StringBuilder()
+        val result = ProcessRunner.run(
+            command = listOf(
+                ffprobePath(),
+                "-v", "quiet",
+                "-print_format", "flat",
+                "-show_format", "-show_streams",
+                path
+            ),
+            timeoutMs = PROBE_TIMEOUT_MS
+        ) { line -> output.append(line).append('\n') }
+        if (result.exitCode != 0) {
+            if (!currentCoroutineContext().isActive) throw FfmpegCancelledException()
+            throw FfmpegFailedException(result.exitCode, result.tail)
+        }
+        return output.toString()
     }
 
     private fun parseHms(hms: String): Double {
@@ -373,6 +340,7 @@ class FfmpegVideoEngine constructor(private val appContext: Context) : VideoEngi
         private const val TAG = "FfmpegVideoEngine"
         private const val FRAME_SAMPLING_TIMEOUT_MS = 5L * 60 * 1000
         private const val TIMEOUT_MS = 30L * 60 * 1000 // 30 min por operação longa
+        private const val PROBE_TIMEOUT_MS = 30L * 1000 // ffprobe não deve levar mais que 30 s
 
         private val REGEX_TIME = Regex("time=([\\d:.]+)")
     }

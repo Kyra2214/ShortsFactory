@@ -19,6 +19,8 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
     buildFeatures { compose = true }
+    // Permite android.util.Log / ContextWrapper nos testes JVM do manager.
+    testOptions { unitTests.isReturnDefaultValues = true }
 }
 
 dependencies {

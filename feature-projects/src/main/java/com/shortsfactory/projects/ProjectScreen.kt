@@ -146,14 +146,7 @@ fun ProjectScreen(
             }
 
             Text("Duração alvo do Short", style = MaterialTheme.typography.titleSmall)
-            val presets = listOf(
-                DurationPreset.FifteenSeconds to "15s",
-                DurationPreset.ThirtySeconds to "30s",
-                DurationPreset.FortyFiveSeconds to "45s",
-                DurationPreset.SixtySeconds to "60s",
-                DurationPreset.NinetySeconds to "90s",
-                DurationPreset.AIDecided to "ai"
-            )
+            val presets = DurationPreset.ALL.map { it to it.key }
             Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
                 presets.forEach { (presetObj, key) ->
                     OutlinedButton(

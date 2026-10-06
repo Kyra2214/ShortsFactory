@@ -1,12 +1,18 @@
 package com.shortsfactory.viewmodels
 
+import com.shortsfactory.core.SecureKeyStore
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.work.WorkInfo
 import com.shortsfactory.app.work.ShortsWorkScheduler
 import com.shortsfactory.app.work.WorkKeys
+import com.shortsfactory.data.repository.ExportBatchRepository
+import com.shortsfactory.data.repository.ExportRepository
 import com.shortsfactory.data.repository.ProjectRepository
+import com.shortsfactory.data.repository.ProjectStore
 import com.shortsfactory.data.repository.ShortRepository
+import com.shortsfactory.data.repository.ShortUpdateResult
+import com.shortsfactory.domain.export.ExportBatchState
 import com.shortsfactory.domain.model.BatchExportProgress
 import com.shortsfactory.export.ShortsProcessingManager
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -15,15 +21,19 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @HiltViewModel
 class EditorViewModel @Inject constructor(
     private val shortRepository: ShortRepository,
-    private val projectRepository: ProjectRepository
+    private val projectRepository: ProjectRepository,
+    private val projectStore: ProjectStore
 ) : ViewModel() {
 
+    private val _error = MutableStateFlow<String?>(null)
+    private val _saved = MutableStateFlow(false)
     private val _title = MutableStateFlow("")
     private val _hook = MutableStateFlow("")
     private val _description = MutableStateFlow("")
@@ -43,6 +53,12 @@ class EditorViewModel @Inject constructor(
     val startMs: StateFlow<Long> = _startMs.asStateFlow()
     val endMs: StateFlow<Long> = _endMs.asStateFlow()
     val videoDurationMs: StateFlow<Long> = _videoDurationMs.asStateFlow()
+    /** Mensagem de validação/erro da última tentativa de salvar (`null` = nenhuma). */
+    val error: StateFlow<String?> = _error.asStateFlow()
+    /** Fica verdadeiro depois que o Short foi salvo; a tela navega de volta só então. */
+    val saved: StateFlow<Boolean> = _saved.asStateFlow()
+
+    fun clearError() { _error.value = null }
 
     fun load(id: Long) {
         shortId = id
@@ -63,6 +79,7 @@ class EditorViewModel @Inject constructor(
 
     fun saveMetadata(
         title: String,
+        hook: String,
         description: String,
         hashtags: String,
         cta: String,
@@ -70,31 +87,28 @@ class EditorViewModel @Inject constructor(
         end: Long
     ) {
         viewModelScope.launch {
-            val duration = _videoDurationMs.value
-            val maxStart = if (duration > 1L) duration - 1L else Long.MAX_VALUE
-            val normalizedStart = start.coerceIn(0L, maxStart)
-            val normalizedEnd = if (duration > 0L) {
-                end.coerceIn(normalizedStart + 1L, duration)
-            } else {
-                end.coerceAtLeast(normalizedStart + 1L)
-            }
-            runCatching {
-                shortRepository.updateMetadata(
-                    id = shortId,
-                    title = title.trim(),
-                    description = description.trim(),
-                    hashtags = hashtags.trim(),
-                    cta = cta.trim(),
-                    startMs = normalizedStart,
-                    endMs = normalizedEnd
-                )
-            }.onSuccess {
-                _title.value = title.trim()
-                _description.value = description.trim()
-                _hashtags.value = hashtags.trim()
-                _cta.value = cta.trim()
-                _startMs.value = normalizedStart
-                _endMs.value = normalizedEnd
+            _error.value = null
+            try {
+                // Validação (0 <= início < fim <= vídeo, mínimo/teto, sem sobreposição) e gravação
+                // atômica ficam no ProjectStore; intervalo inválido é recusado, não "corrigido".
+                when (val result = projectStore.updateShort(shortId, title, hook, description, hashtags, cta, start, end)) {
+                    is ShortUpdateResult.Saved -> {
+                        _title.value = title.trim()
+                        _hook.value = hook.trim()
+                        _description.value = description.trim()
+                        _hashtags.value = hashtags.trim()
+                        _cta.value = cta.trim()
+                        _startMs.value = start
+                        _endMs.value = end
+                        _saved.value = true
+                    }
+                    is ShortUpdateResult.Rejected -> _error.value = result.message
+                    ShortUpdateResult.NotFound -> _error.value = "Short não encontrado."
+                }
+            } catch (ce: kotlinx.coroutines.CancellationException) {
+                throw ce
+            } catch (e: Exception) {
+                _error.value = e.message ?: "Não foi possível salvar o Short."
             }
         }
     }
@@ -105,7 +119,10 @@ class EditorViewModel @Inject constructor(
 @HiltViewModel
 class ExportViewModel @Inject constructor(
     private val shortRepository: ShortRepository,
-    private val workScheduler: ShortsWorkScheduler
+    private val workScheduler: ShortsWorkScheduler,
+    private val keyStore: SecureKeyStore,
+    private val exportRepository: ExportRepository,
+    private val exportBatchRepository: ExportBatchRepository
 ) : ViewModel() {
 
     private val _shortsCount = MutableStateFlow(0)
@@ -122,6 +139,7 @@ class ExportViewModel @Inject constructor(
         projectId = id
         viewModelScope.launch {
             _shortsCount.value = shortRepository.getByProject(id).size
+            restoreExportProgress(id)
             exportObservationJob?.cancel()
             exportObservationJob = launch {
                 workScheduler.observeExport(id).collectLatest { infos ->
@@ -130,21 +148,49 @@ class ExportViewModel @Inject constructor(
                     if (info.state == WorkInfo.State.FAILED) {
                         _error.value = info.outputData.getString(WorkKeys.ERROR) ?: "Falha ao exportar os Shorts."
                     } else if (info.state == WorkInfo.State.SUCCEEDED) {
-                        _error.value = null
+                        val failed = info.outputData.getInt(WorkKeys.FAILED_COUNT, 0)
+                        val total = info.outputData.getInt(WorkKeys.TOTAL, 0)
+                        _error.value = if (failed > 0) "$failed de $total exportações falharam." else null
                     }
                 }
             }
         }
     }
 
+    /**
+     * Reabrir o app: mostra o progresso do último lote persistido e, se o lote ficou aberto sem trabalho
+     * ativo no WorkManager, retoma com os parâmetros dos exports pendentes (`getResumableByProject`).
+     */
+    private suspend fun restoreExportProgress(id: Long) {
+        val batch = exportBatchRepository.getLatest(id) ?: return
+        val open = ExportBatchState.isOpen(batch.state)
+        if (_progress.value == null) {
+            _progress.value = BatchExportProgress(
+                total = batch.total,
+                current = (batch.completed + batch.failed).coerceIn(0, batch.total.coerceAtLeast(0)),
+                currentProgress = 0f,
+                isRunning = false
+            )
+        }
+        if (!open) return
+        val hasActiveWork = workScheduler.observeExport(id).first().any { !it.state.isFinished }
+        if (hasActiveWork) return
+        val pending = exportRepository.getResumableByProject(id).firstOrNull() ?: return
+        workScheduler.enqueueExport(
+            id, pending.platform.split(',').filter { it.isNotBlank() },
+            pending.quality, pending.resolution, pending.fps, keyStore.subtitleStyle()
+        )
+    }
+
     fun startExport(platforms: List<String>, quality: String, resolution: String, fps: Int) {
         if (_progress.value?.isRunning == true) return
         _error.value = null
-        workScheduler.enqueueExport(projectId, platforms, quality, resolution, fps)
+        workScheduler.enqueueExport(projectId, platforms, quality, resolution, fps, keyStore.subtitleStyle())
     }
 
     fun cancel() {
         workScheduler.cancelExport(projectId)
+        viewModelScope.launch { exportBatchRepository.cancelOpen(projectId) }
     }
 
     override fun onCleared() {

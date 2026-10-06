@@ -1,17 +1,20 @@
 package com.shortsfactory.data.repository
 
 import com.shortsfactory.data.local.dao.AIAnalysisDao
+import com.shortsfactory.data.local.dao.ExportBatchDao
 import com.shortsfactory.data.local.dao.ExportDao
 import com.shortsfactory.data.local.dao.ProjectDao
 import com.shortsfactory.data.local.dao.ShortDao
 import com.shortsfactory.data.local.dao.SubtitleDao
 import com.shortsfactory.data.local.dao.TranscriptDao
 import com.shortsfactory.data.local.entity.AIAnalysisEntity
+import com.shortsfactory.data.local.entity.ExportBatchEntity
 import com.shortsfactory.data.local.entity.ExportEntity
 import com.shortsfactory.data.local.entity.ProjectEntity
 import com.shortsfactory.data.local.entity.ShortEntity
 import com.shortsfactory.data.local.entity.SubtitleEntity
 import com.shortsfactory.data.local.entity.TranscriptEntity
+import com.shortsfactory.domain.export.ExportBatchState
 import com.shortsfactory.domain.model.AIAnalysisResult
 import com.shortsfactory.domain.model.ShortCandidate
 import com.shortsfactory.domain.model.SubtitleSegment
@@ -47,31 +50,19 @@ class ShortRepository(private val dao: ShortDao) {
     suspend fun getByProject(projectId: Long): List<ShortEntity> = dao.getByProject(projectId)
     suspend fun getById(id: Long): ShortEntity? = dao.getById(id)
 
-    suspend fun insertCandidates(projectId: Long, candidates: List<ShortCandidate>): List<Long> {
-        return candidates.map { candidate ->
-            dao.insert(
-                ShortEntity(
-                    projectId = projectId,
-                    startMs = candidate.startMs,
-                    endMs = candidate.endMs,
-                    score = candidate.score,
-                    title = candidate.title,
-                    hook = candidate.hook,
-                    topic = candidate.topic,
-                    reason = candidate.reason,
-                    description = "",
-                    hashtags = "",
-                    cta = "",
-                    status = "pending",
-                    updatedAtMs = now()
-                )
-            )
-        }
-    }
+    /** Insere os candidatos de UMA análise. Re-análise passa por [ProjectStore.saveAnalysis], que apaga os antigos. */
+    suspend fun insertCandidates(projectId: Long, candidates: List<ShortCandidate>): List<Long> =
+        candidates.map { dao.insert(candidateToEntity(projectId, it)) }
 
+    /**
+     * Grava os campos editáveis. Mudar o intervalo invalida o export anterior (ver `ShortDao.updateMetadata`).
+     * Esta camada só garante `fim > início`; os limites completos (vídeo, mínimo, teto, sobreposição)
+     * são aplicados por [ProjectStore.updateShort].
+     */
     suspend fun updateMetadata(
         id: Long,
         title: String,
+        hook: String,
         description: String,
         hashtags: String,
         cta: String,
@@ -82,6 +73,7 @@ class ShortRepository(private val dao: ShortDao) {
         dao.updateMetadata(
             id = id,
             title = title.trim(),
+            hook = hook.trim(),
             description = description.trim(),
             hashtags = hashtags.trim(),
             cta = cta.trim(),
@@ -91,24 +83,49 @@ class ShortRepository(private val dao: ShortDao) {
         )
     }
 
+    /** Estado final do export. O erro anterior só é limpo ao concluir (`done`); falha/cancelamento o preservam. */
     suspend fun updateExportState(id: Long, localPath: String?, status: String) {
         dao.updateExportState(
             id = id,
             status = status,
             progress = if (status == "done") 1f else 0f,
             error = null,
+            replaceError = status == "done",
             localPath = localPath,
             updatedAtMs = now()
         )
     }
 
+    /**
+     * Atualiza estado/progresso. O erro é preservado, exceto numa transição explícita: nova mensagem
+     * (`error != null`), início de execução (`processing`) ou conclusão (`done`).
+     */
     suspend fun updateExportProgress(id: Long, status: String, progress: Float, error: String? = null) {
         dao.updateExportState(
             id = id,
             status = status,
             progress = progress,
             error = error,
+            replaceError = error != null || status == "processing" || status == "done",
             localPath = null,
+            updatedAtMs = now()
+        )
+    }
+
+    companion object {
+        /** Candidato da análise → linha de `shorts`, com legendas e foco persistidos. */
+        fun candidateToEntity(projectId: Long, candidate: ShortCandidate): ShortEntity = ShortEntity(
+            projectId = projectId,
+            startMs = candidate.startMs,
+            endMs = candidate.endMs,
+            score = candidate.score,
+            title = candidate.title,
+            hook = candidate.hook,
+            topic = candidate.topic,
+            reason = candidate.reason,
+            status = "pending",
+            subtitlesJson = candidate.subtitles.takeIf { it.isNotEmpty() }?.let(CandidateArtifactsCodec::encodeSubtitles),
+            focusTrackJson = candidate.focusTrack?.let(CandidateArtifactsCodec::encodeFocusTrack),
             updatedAtMs = now()
         )
     }
@@ -129,14 +146,12 @@ class AIAnalysisRepository(private val dao: AIAnalysisDao) {
     private val json = Json { encodeDefaults = true; ignoreUnknownKeys = true }
 
     suspend fun save(projectId: Long, provider: String, result: AIAnalysisResult) {
-        dao.insert(
-            AIAnalysisEntity(
-                projectId = projectId,
-                provider = provider,
-                json = json.encodeToString(PersistedAnalysis.serializer(), result.toPersisted())
-            )
-        )
+        dao.insert(AIAnalysisEntity(projectId = projectId, provider = provider, json = encode(result)))
     }
+
+    /** JSON persistido da análise (usado também por [ProjectStore], dentro de uma transação). */
+    fun encode(result: AIAnalysisResult): String =
+        json.encodeToString(PersistedAnalysis.serializer(), result.toPersisted())
 
     suspend fun get(projectId: Long): AIAnalysisResult? {
         val entity = dao.getByProject(projectId) ?: return null
@@ -252,6 +267,42 @@ class SubtitleRepository(private val dao: SubtitleDao) {
     }
 }
 
+class ExportBatchRepository(private val dao: ExportBatchDao) {
+    fun observeLatest(projectId: Long): Flow<ExportBatchEntity?> = dao.observeLatest(projectId)
+    suspend fun getLatest(projectId: Long): ExportBatchEntity? = dao.getLatest(projectId)
+
+    /** Inicia (ou retoma, se o último lote ainda está aberto) o lote do projeto; contadores recomeçam do zero. */
+    suspend fun start(projectId: Long, total: Int): Long {
+        val now = System.currentTimeMillis()
+        val open = dao.getLatest(projectId)?.takeIf { ExportBatchState.isOpen(it.state) }
+        if (open != null) {
+            dao.update(open.copy(total = total, completed = 0, failed = 0, cancelled = 0, state = ExportBatchState.RUNNING, updatedAtMs = now))
+            return open.id
+        }
+        return dao.insert(
+            ExportBatchEntity(projectId = projectId, total = total, completed = 0, failed = 0, cancelled = 0, state = ExportBatchState.RUNNING)
+        )
+    }
+
+    /** Cancelamento pelo usuário: fecha o lote aberto (o worker pode nem ter começado). Idempotente. */
+    suspend fun cancelOpen(projectId: Long) {
+        val open = dao.getLatest(projectId)?.takeIf { ExportBatchState.isOpen(it.state) } ?: return
+        dao.update(
+            open.copy(
+                cancelled = (open.total - open.completed - open.failed).coerceAtLeast(0),
+                state = ExportBatchState.CANCELLED,
+                updatedAtMs = System.currentTimeMillis()
+            )
+        )
+    }
+
+    /** O id do lote é o token: gravações de uma execução antiga (outro `id`) nunca alteram o lote atual. */
+    suspend fun record(id: Long, projectId: Long, completed: Int, failed: Int, cancelled: Int, state: String) {
+        val current = dao.getLatest(projectId)?.takeIf { it.id == id } ?: return
+        dao.update(current.copy(completed = completed, failed = failed, cancelled = cancelled, state = state, updatedAtMs = System.currentTimeMillis()))
+    }
+}
+
 class ExportRepository(private val dao: ExportDao) {
     fun observeByProject(projectId: Long): Flow<List<ExportEntity>> = dao.observeByProject(projectId)
     suspend fun getById(id: Long): ExportEntity? = dao.getById(id)
@@ -266,7 +317,8 @@ class ExportRepository(private val dao: ExportDao) {
     suspend fun getResumableByProject(projectId: Long): List<ExportEntity> = dao.getResumableByProject(projectId)
     suspend fun insert(entity: ExportEntity): Long = dao.insert(entity)
 
-    suspend fun markQueued(id: Long) = update(id, status = "queued", progress = 0f, errorMessage = null, replaceError = true)
+    suspend fun markQueued(id: Long) =
+        update(id, status = "queued", progress = 0f, errorMessage = null, replaceError = true, resetCompleted = true)
 
     suspend fun markRunning(id: Long): ExportEntity? {
         val current = dao.getById(id) ?: return null
@@ -277,7 +329,8 @@ class ExportRepository(private val dao: ExportDao) {
             attemptCount = current.attemptCount + 1,
             startedAtMs = current.startedAtMs ?: now(),
             errorMessage = null,
-            replaceError = true
+            replaceError = true,
+            resetCompleted = true
         )
         return dao.getById(id)
     }
@@ -313,6 +366,7 @@ class ExportRepository(private val dao: ExportDao) {
         replaceError: Boolean = false,
         startedAtMs: Long? = null,
         completedAtMs: Long? = null,
+        resetCompleted: Boolean = false,
         outputPath: String? = null
     ) {
         val current = dao.getById(id) ?: return
@@ -325,6 +379,7 @@ class ExportRepository(private val dao: ExportDao) {
             replaceError = replaceError,
             startedAtMs = startedAtMs,
             completedAtMs = completedAtMs,
+            resetCompleted = resetCompleted,
             outputPath = outputPath
         )
     }

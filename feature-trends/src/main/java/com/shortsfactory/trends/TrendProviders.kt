@@ -1,6 +1,7 @@
 package com.shortsfactory.trends
 
 import com.shortsfactory.domain.ai.AIProvider
+import com.shortsfactory.domain.model.ProviderCapability
 import com.shortsfactory.domain.model.TrendCard
 import com.shortsfactory.domain.model.TrendRegion
 import com.shortsfactory.domain.trends.TrendProvider
@@ -43,8 +44,9 @@ class TrendSearchRepositoryImpl @Inject constructor(
             )
         }
         val platformCards = async {
+            // "grok" já é coberto por aiResults; chamar o provider repetiria a chamada de IA.
             allProviders
-                .firstOrNull { it.platformKey == platform }
+                .firstOrNull { it.platformKey == platform && it.platformKey != GROK_KEY }
                 ?.search(query, region, niche)
                 ?: emptyList()
         }
@@ -69,17 +71,17 @@ class TrendSearchRepositoryImpl @Inject constructor(
         }
         // Provedores oficiais com API retornam dados; demais redirecionam ao site
         val platformCards = async {
-            platforms.mapNotNull { key ->
+            platforms.filter { it != GROK_KEY }.mapNotNull { key ->
                 allProviders.firstOrNull { it.platformKey == key }
                     ?.search("", region, niche.ifEmpty { "trending" })
             }.flatten()
         }
         val all = aiResults.await() + platformCards.await()
-        all.mapIndexed { index, card ->
-            card.copy(relevanceScore = (all.size - index) * 10)
-        }.sortedByDescending { it.relevanceScore }
+        all.mapIndexed { index, card -> card.copy(order = index + 1) }
     }
 }
+
+private const val GROK_KEY = "grok"
 
 /** Períodos disponíveis para o Caçador de Tendências. */
 object HunterPeriods {
@@ -93,10 +95,10 @@ object HunterPeriods {
 
 /** Provedor alimentado pela IA (Grok) com conhecimento público sobre tendências. */
 class GrokTrendProvider(private val aiProvider: AIProvider) : TrendProvider {
-    override val platformKey: String = "grok"
+    override val platformKey: String = GROK_KEY
     override val platformLabel: String = "Análise IA (temas em alta)"
 
-    override fun isAvailable(): Boolean = true
+    override val capability: ProviderCapability = ProviderCapability.AI_INFERENCE
 
     override fun officialUrl(region: TrendRegion, niche: String): String = ""
 
@@ -115,7 +117,7 @@ object YouTubeTrendProvider : TrendProvider {
     override val platformKey: String = "youtube"
     override val platformLabel: String = "YouTube Shorts"
 
-    override fun isAvailable(): Boolean = false
+    override val capability: ProviderCapability = ProviderCapability.LINK_ONLY
 
     override fun officialUrl(region: TrendRegion, niche: String): String =
         "https://www.youtube.com/results?search_query=${java.net.URLEncoder.encode(niche, "UTF-8")}&sp=EgIYAQ%253D%253D"
@@ -129,7 +131,8 @@ object YouTubeTrendProvider : TrendProvider {
                 views = null,
                 engagement = null,
                 sourceUrl = officialUrl(region, niche),
-                openable = true
+                openable = true,
+                origin = capability.toOrigin()
             )
         )
 }
@@ -138,7 +141,7 @@ object InstagramTrendProvider : TrendProvider {
     override val platformKey: String = "instagram"
     override val platformLabel: String = "Instagram Reels"
 
-    override fun isAvailable(): Boolean = false
+    override val capability: ProviderCapability = ProviderCapability.LINK_ONLY
     override fun officialUrl(region: TrendRegion, niche: String): String =
         "https://www.instagram.com/explore/tags/${java.net.URLEncoder.encode(niche, "UTF-8")}"
 
@@ -151,7 +154,8 @@ object InstagramTrendProvider : TrendProvider {
                 views = null,
                 engagement = null,
                 sourceUrl = officialUrl(region, niche),
-                openable = true
+                openable = true,
+                origin = capability.toOrigin()
             )
         )
 }
@@ -160,7 +164,7 @@ object TikTokTrendProvider : TrendProvider {
     override val platformKey: String = "tiktok"
     override val platformLabel: String = "TikTok"
 
-    override fun isAvailable(): Boolean = false
+    override val capability: ProviderCapability = ProviderCapability.LINK_ONLY
     override fun officialUrl(region: TrendRegion, niche: String): String =
         "https://www.tiktok.com/search?q=${java.net.URLEncoder.encode(niche, "UTF-8")}"
 
@@ -173,7 +177,8 @@ object TikTokTrendProvider : TrendProvider {
                 views = null,
                 engagement = null,
                 sourceUrl = officialUrl(region, niche),
-                openable = true
+                openable = true,
+                origin = capability.toOrigin()
             )
         )
 }
@@ -182,7 +187,7 @@ object FacebookTrendProvider : TrendProvider {
     override val platformKey: String = "facebook"
     override val platformLabel: String = "Facebook Reels"
 
-    override fun isAvailable(): Boolean = false
+    override val capability: ProviderCapability = ProviderCapability.LINK_ONLY
     override fun officialUrl(region: TrendRegion, niche: String): String =
         "https://www.facebook.com/search/videos?q=${java.net.URLEncoder.encode(niche, "UTF-8")}"
 
@@ -195,7 +200,8 @@ object FacebookTrendProvider : TrendProvider {
                 views = null,
                 engagement = null,
                 sourceUrl = officialUrl(region, niche),
-                openable = true
+                openable = true,
+                origin = capability.toOrigin()
             )
         )
 }
@@ -204,7 +210,7 @@ object RedditTrendProvider : TrendProvider {
     override val platformKey: String = "reddit"
     override val platformLabel: String = "Reddit"
 
-    override fun isAvailable(): Boolean = false
+    override val capability: ProviderCapability = ProviderCapability.LINK_ONLY
     override fun officialUrl(region: TrendRegion, niche: String): String =
         "https://www.reddit.com/search/?q=${java.net.URLEncoder.encode(niche, "UTF-8")}"
 
@@ -217,7 +223,8 @@ object RedditTrendProvider : TrendProvider {
                 views = null,
                 engagement = null,
                 sourceUrl = officialUrl(region, niche),
-                openable = true
+                openable = true,
+                origin = capability.toOrigin()
             )
         )
 }
@@ -226,7 +233,7 @@ object DouyinTrendProvider : TrendProvider {
     override val platformKey: String = "douyin"
     override val platformLabel: String = "Douyin"
 
-    override fun isAvailable(): Boolean = false
+    override val capability: ProviderCapability = ProviderCapability.LINK_ONLY
     override fun officialUrl(region: TrendRegion, niche: String): String =
         "https://www.douyin.com/search/${java.net.URLEncoder.encode(niche, "UTF-8")}"
 
@@ -239,7 +246,8 @@ object DouyinTrendProvider : TrendProvider {
                 views = null,
                 engagement = null,
                 sourceUrl = officialUrl(region, niche),
-                openable = true
+                openable = true,
+                origin = capability.toOrigin()
             )
         )
 }
@@ -248,7 +256,7 @@ object BilibiliTrendProvider : TrendProvider {
     override val platformKey: String = "bilibili"
     override val platformLabel: String = "Bilibili"
 
-    override fun isAvailable(): Boolean = false
+    override val capability: ProviderCapability = ProviderCapability.LINK_ONLY
     override fun officialUrl(region: TrendRegion, niche: String): String =
         "https://search.bilibili.com/all?keyword=${java.net.URLEncoder.encode(niche, "UTF-8")}"
 
@@ -261,7 +269,8 @@ object BilibiliTrendProvider : TrendProvider {
                 views = null,
                 engagement = null,
                 sourceUrl = officialUrl(region, niche),
-                openable = true
+                openable = true,
+                origin = capability.toOrigin()
             )
         )
 }
@@ -270,7 +279,7 @@ object KuaishouTrendProvider : TrendProvider {
     override val platformKey: String = "kuaishou"
     override val platformLabel: String = "Kuaishou"
 
-    override fun isAvailable(): Boolean = false
+    override val capability: ProviderCapability = ProviderCapability.LINK_ONLY
     override fun officialUrl(region: TrendRegion, niche: String): String =
         "https://www.kuaishou.com/search/video?searchKey=${java.net.URLEncoder.encode(niche, "UTF-8")}"
 
@@ -283,7 +292,8 @@ object KuaishouTrendProvider : TrendProvider {
                 views = null,
                 engagement = null,
                 sourceUrl = officialUrl(region, niche),
-                openable = true
+                openable = true,
+                origin = capability.toOrigin()
             )
         )
 }
@@ -292,7 +302,7 @@ object XiaohongshuTrendProvider : TrendProvider {
     override val platformKey: String = "xiaohongshu"
     override val platformLabel: String = "Xiaohongshu"
 
-    override fun isAvailable(): Boolean = false
+    override val capability: ProviderCapability = ProviderCapability.LINK_ONLY
     override fun officialUrl(region: TrendRegion, niche: String): String =
         "https://www.xiaohongshu.com/search_result?keyword=${java.net.URLEncoder.encode(niche, "UTF-8")}"
 
@@ -305,7 +315,8 @@ object XiaohongshuTrendProvider : TrendProvider {
                 views = null,
                 engagement = null,
                 sourceUrl = officialUrl(region, niche),
-                openable = true
+                openable = true,
+                origin = capability.toOrigin()
             )
         )
 }

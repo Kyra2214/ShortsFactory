@@ -1,6 +1,8 @@
 # Roadmap de implementação — 12 fases
 
-> **Estado real do projeto:** veja `docs/AUDITORIA-E-FASES.md` (auditoria e plano corrigido) e `docs/fases/` (relatório de cada fase executada). Este roadmap descreve a intenção original; várias fases aqui listadas não estavam funcionando quando foram marcadas como concluídas.
+> **Estado atual (integração das Fases 2–10):** PR #3 está verde no commit `394c182`: testes JVM, lint debug/release, builds APK e 9 testes instrumentados Room no emulador API 35 passaram nos runs [automático](https://github.com/Kyra2214/ShortsFactory/actions/runs/37437160979) e [manual](https://github.com/Kyra2214/ShortsFactory/actions/runs/37437183782). O job libera espaço removendo somente NDK pré-instalado não utilizado. A quota de artefatos do GitHub impede o upload de relatórios, sem bloquear CI. A validação FFmpeg arm64 em aparelho real continua pendente.
+>
+> **Fonte operacional:** `docs/VALIDACAO-INTEGRACAO-FASE-02.md` e os relatórios em `docs/fases/`. `docs/AUDITORIA-E-FASES.md` é uma auditoria estática histórica de um snapshot anterior; não representa sozinha o estado atual.
 
 Este documento é a referência operacional do ciclo. Uma fase só é considerada concluída quando o código executa o caminho real, os componentes faltantes são implementados e os testes/CI que cobrem o contrato passam.
 
@@ -90,7 +92,7 @@ Este documento é a referência operacional do ciclo. Uma fase só é considerad
 - Documentação alinhada ao comportamento real.
 
 ## Progresso (plano corrigido)
-Fase 0: implementada, gate de CI pendente. Fase 1: implementada, gate arm64 pendente. Fase 2: implementada (5/5), gates pendentes. Progresso geral: ~27% (3 de 11 fases implementadas; nenhum gate executado por falta de Gradle/aparelho).
+Fases 0–10: implementação integrada; 139 testes de `:domain` e 5 verificações com FFmpeg real passaram localmente. Job principal de CI anterior (testes JVM, lint e APKs) passou; migração instrumentada, lint/build do snapshot atual e execução arm64 aguardam validação. Não declarar o ciclo concluído até o workflow completo ficar verde.
 
 ## Regra de encerramento
 

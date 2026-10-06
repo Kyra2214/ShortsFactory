@@ -4,7 +4,15 @@ import com.shortsfactory.core.SecureKeyStore
 import com.shortsfactory.domain.model.Transcript
 import com.shortsfactory.domain.model.TranscriptSegment
 import com.shortsfactory.domain.pipeline.TranscriptionService
+import com.shortsfactory.domain.ai.AiHttpException
 import com.shortsfactory.domain.pipeline.VideoEngine
+import kotlinx.coroutines.suspendCancellableCoroutine
+import okhttp3.Call
+import okhttp3.Callback
+import okhttp3.Response
+import java.io.IOException
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -62,8 +70,13 @@ class OpenAiTranscriptionService @Inject constructor(
                 val chunk = requestChunk(apiKey, File(path), offsetMs)
                 allSegments += chunk.segments
                 if (chunk.text.isNotBlank()) allText += chunk.text.trim()
-                val actualDuration = runCatching { videoEngine.probe(path).durationMs }
-                    .getOrDefault(0L)
+                val actualDuration = try {
+                    videoEngine.probe(path).durationMs
+                } catch (ce: kotlinx.coroutines.CancellationException) {
+                    throw ce
+                } catch (e: Exception) {
+                    0L
+                }
                 offsetMs += actualDuration.takeIf { it > 0L } ?: CHUNK_DURATION_MS
             }
             if (allSegments.isNotEmpty()) {
@@ -94,7 +107,7 @@ class OpenAiTranscriptionService @Inject constructor(
         }
     }
 
-    private fun requestChunk(apiKey: String, audioFile: File, offsetMs: Long): TranscriptChunk {
+    private suspend fun requestChunk(apiKey: String, audioFile: File, offsetMs: Long): TranscriptChunk {
         val requestBody = MultipartBody.Builder()
             .setType(MultipartBody.FORM)
             .addFormDataPart("model", MODEL)
@@ -113,25 +126,41 @@ class OpenAiTranscriptionService @Inject constructor(
             .post(requestBody)
             .build()
 
-        client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
-                throw IllegalStateException("Serviço de transcrição indisponível (HTTP ${response.code}).")
+        // Suspende cancelável: cancelar o coroutine chama Call.cancel() e aborta a rede na hora.
+        val (code, body) = client.newCall(request).awaitBody()
+        if (code !in 200..299) throw AiHttpException(code, body)
+        val parsed = OpenAiTranscriptionParser.parse(json, body)
+        return TranscriptChunk(
+            text = parsed.text,
+            segments = parsed.segments.mapNotNull { segment ->
+                val startMs = ((segment.start ?: 0.0) * 1_000).toLong().coerceAtLeast(0L) + offsetMs
+                val endMs = ((segment.end ?: 0.0) * 1_000).toLong() + offsetMs
+                val text = segment.text.trim()
+                if (endMs <= startMs || text.isEmpty()) null else TranscriptSegment(startMs, endMs, text)
             }
-            val body = response.body?.string().orEmpty()
-            val parsed = OpenAiTranscriptionParser.parse(json, body)
-            return TranscriptChunk(
-                text = parsed.text,
-                segments = parsed.segments.mapNotNull { segment ->
-                    val startMs = ((segment.start ?: 0.0) * 1_000).toLong().coerceAtLeast(0L) + offsetMs
-                    val endMs = ((segment.end ?: 0.0) * 1_000).toLong() + offsetMs
-                    val text = segment.text.trim()
-                    if (endMs <= startMs || text.isEmpty()) null else TranscriptSegment(startMs, endMs, text)
-                }
-            )
-        }
+        )
     }
 
-    private fun fallbackTranscript(audioPath: String, text: String): Transcript {
+    /** Executa a chamada e lê o corpo no callback; cancelar o coroutine cancela a chamada HTTP. */
+    private suspend fun Call.awaitBody(): Pair<Int, String> = suspendCancellableCoroutine { continuation ->
+        continuation.invokeOnCancellation { cancel() }
+        enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                if (continuation.isActive) continuation.resumeWithException(e)
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                try {
+                    val result = response.use { it.code to it.body?.string().orEmpty() }
+                    if (continuation.isActive) continuation.resume(result)
+                } catch (e: IOException) {
+                    if (continuation.isActive) continuation.resumeWithException(e)
+                }
+            }
+        })
+    }
+
+    private suspend fun fallbackTranscript(audioPath: String, text: String): Transcript {
         val normalized = text.trim()
         if (normalized.isEmpty()) return Transcript(emptyList())
         val durationMs = videoEngine.probe(audioPath).durationMs.coerceAtLeast(1_000L)

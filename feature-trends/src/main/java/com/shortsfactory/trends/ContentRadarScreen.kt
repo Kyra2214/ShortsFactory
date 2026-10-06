@@ -182,6 +182,8 @@ fun ContentRadarScreen(
                                 platform = platformKey,
                                 niche = niche
                             )
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
                         } catch (e: Exception) {
                             error = "Falha ao consultar: ${e.message}"
                         } finally {
@@ -225,12 +227,7 @@ private fun TrendCardItem(card: TrendCard) {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            card.views?.let {
-                Text("Visualizações estimadas: $it", style = MaterialTheme.typography.bodySmall)
-            }
-            card.engagement?.let {
-                Text("Engajamento: $it", style = MaterialTheme.typography.bodySmall)
-            }
+            TrendCardInfo(card)
             Spacer(Modifier.height(8.dp))
             Text(
                 text = card.sourceUrl,

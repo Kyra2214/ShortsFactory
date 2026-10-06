@@ -115,18 +115,11 @@ fun SettingsScreen(
 
             Spacer(Modifier.height(12.dp))
             Text("Duração padrão", style = MaterialTheme.typography.titleSmall)
-            listOf(
-                DurationPreset.FifteenSeconds,
-                DurationPreset.ThirtySeconds,
-                DurationPreset.FortyFiveSeconds,
-                DurationPreset.SixtySeconds,
-                DurationPreset.NinetySeconds,
-                DurationPreset.AIDecided
-            ).forEach { preset ->
+            DurationPreset.ALL.forEach { preset ->
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     RadioButton(
-                        selected = duration == preset.key(),
-                        onClick = { duration = preset.key() }
+                        selected = duration == preset.key,
+                        onClick = { duration = preset.key }
                     )
                     Text(preset.label)
                 }
@@ -152,13 +145,4 @@ fun SettingsScreen(
             }
         }
     }
-}
-
-private fun DurationPreset.key(): String = when (this) {
-    is DurationPreset.FifteenSeconds -> "15s"
-    is DurationPreset.ThirtySeconds -> "30s"
-    is DurationPreset.FortyFiveSeconds -> "45s"
-    is DurationPreset.SixtySeconds -> "60s"
-    is DurationPreset.NinetySeconds -> "90s"
-    is DurationPreset.AIDecided -> "ai"
 }

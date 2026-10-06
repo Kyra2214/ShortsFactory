@@ -22,7 +22,7 @@ class MediaPipelineExecutionTest {
             val candidate = ShortCandidate(
                 score = 0.9f,
                 startMs = 500L,
-                endMs = 2_500L,
+                endMs = 4_500L,
                 title = "hook",
                 hook = "hook",
                 topic = "topic",
@@ -82,7 +82,8 @@ class MediaPipelineExecutionTest {
             Transcript(
                 listOf(
                     TranscriptSegment(0L, 1_200L, "primeiro trecho"),
-                    TranscriptSegment(1_200L, 2_700L, "segundo trecho")
+                    TranscriptSegment(1_200L, 2_700L, "segundo trecho"),
+                    TranscriptSegment(2_700L, 6_000L, "terceiro trecho")
                 )
             )
     }
@@ -100,8 +101,7 @@ class MediaPipelineExecutionTest {
 
     private class FakeVideoEngine : VideoEngine {
         var detectCalls = 0
-        override fun cancel() = Unit
-        override fun probe(path: String) = InputVideoInfo(path, 5_000L, 1920, 1080, 30.0, true)
+        override suspend fun probe(path: String) = InputVideoInfo(path, 10_000L, 1920, 1080, 30.0, true)
         override suspend fun extractAudio(videoPath: String, outputPath: String) = Unit
         override suspend fun splitAudio(audioPath: String, outputDir: String, chunkDurationMs: Long) = emptyList<String>()
         override suspend fun processClip(spec: ClipSpec, onProgress: (Float) -> Unit) = Unit
@@ -113,6 +113,6 @@ class MediaPipelineExecutionTest {
             )
         }
         override suspend fun extractFrame(videoPath: String, timeMs: Long, outputPath: String) = Unit
-        override fun isAlreadyTargetFormat(path: String, target: com.shortsfactory.domain.model.ResolutionPreset, fps: Int) = false
+        override suspend fun isAlreadyTargetFormat(path: String, target: com.shortsfactory.domain.model.ResolutionPreset, fps: Int) = false
     }
 }

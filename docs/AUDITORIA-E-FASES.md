@@ -1,5 +1,6 @@
 # ShortsFactory — Auditoria e fases de implementação
 
+> **Nota de escopo:** este documento é uma auditoria estática histórica do snapshot citado abaixo. Suas constatações descrevem aquela base e não devem ser tratadas como fotografia da branch atual; consulte `docs/VALIDACAO-INTEGRACAO-FASE-02.md` e `docs/fases/` para o estado e as evidências mais recentes.
 > Base auditada: `ShortsFactory-main.zip` (~7.000 linhas Kotlin, 12 módulos).
 > **Fonte da verdade:** apenas o conteúdo do zip. Nada de PRs, branches ou execuções de CI externas foi considerado.
 > Método: leitura estática do código. Nada foi compilado nem executado (sem Android SDK no ambiente). Itens marcados **[confirmado]** são evidentes no código ou no binário. Itens marcados **[verificar]** dependem de rodar.
@@ -198,6 +199,7 @@ Cada fase tem **entrega**, **critério de aceite** e **gate**. Uma fase só vira
 **Gate:** JVM (golden) + teste arm64 da Fase 1 com um clipe real.
 
 ### Fase 3 — Cancelamento e estados corretos (P0/P1)
+**Status: implementada (3.1 a 3.6). Gate pendente: `:domain:test` e compilação Android no CI; teste instrumentado de cancelamento em arm64.** Detalhes: [`docs/fases/FASE-03-CANCELAMENTO-E-ESTADOS.md`](fases/FASE-03-CANCELAMENTO-E-ESTADOS.md).
 **Objetivo:** cancelar significa cancelar, e o estado gravado reflete a etapa real.
 - Criar `sealed class EngineResult`/exceção `FfmpegCancelledException` distinta de `FfmpegFailedException(exit, stderrTail)`. `run()` deve lançar `CancellationException` quando o processo morre por `cancel()` ou por cancelamento do coroutine.
 - `run()`: `withContext(Dispatchers.IO)` + `try/finally { process.destroyForcibly() }`. Remover `CoroutineScope(...).launch` solto.
@@ -211,6 +213,7 @@ Cada fase tem **entrega**, **critério de aceite** e **gate**. Uma fase só vira
 **Gate:** JVM + instrumentado.
 
 ### Fase 4 — Pipeline e validação de entrada (P1)
+**Status: implementada (4.1 a 4.7). Gate pendente: `:domain:test` e compilação Android no CI.** Detalhes: [`docs/fases/FASE-04-PIPELINE-E-VALIDACAO.md`](fases/FASE-04-PIPELINE-E-VALIDACAO.md).
 **Objetivo:** nenhum estágio roda com entrada inválida, e a saída da IA é saneada.
 - Mover `MediaValidator` para dentro de `MediaAnalysisPipeline.validateInput` (o worker passa a só delegar).
 - Áudio temporário em `cacheDir/analysis/<projectId>/` com `try/finally` para apagar. Sem `replaceLast`.
@@ -223,6 +226,7 @@ Cada fase tem **entrega**, **critério de aceite** e **gate**. Uma fase só vira
 **Gate:** JVM.
 
 ### Fase 5 — Seleção determinística (P1)
+**Status: implementada (5.1 a 5.5). Gate pendente: `:domain:test` e compilação Android no CI.** Detalhes: [`docs/fases/FASE-05-SELECAO-DETERMINISTICA.md`](fases/FASE-05-SELECAO-DETERMINISTICA.md).
 - `CandidateSelector`: aplicar o mesmo pipeline de regras para **todos** os presets, inclusive `"ai"`: faixa válida dentro da duração do vídeo, duração mínima (ex.: 3 s) e máxima, remoção de sobreposição por maior score, limite, desempate por `startMs`.
 - Unificar o mapa de preset → duração em um único lugar (`DurationPreset.fromKey`). Preset desconhecido deve falhar com erro claro ou usar um default **único**.
 - Definir o comportamento para `"ai"`: teto = `suggestedDurationMs` ou um máximo global (ex.: 90 s).
@@ -231,6 +235,7 @@ Cada fase tem **entrega**, **critério de aceite** e **gate**. Uma fase só vira
 **Gate:** JVM.
 
 ### Fase 6 — Persistência, Editor e Room (P1)
+**Status: implementada (6.1 a 6.7). Gate pendente: compilação Android, schemas JSON e testes instrumentados.** Detalhes: [`docs/fases/FASE-06-PERSISTENCIA-EDITOR-ROOM.md`](fases/FASE-06-PERSISTENCIA-EDITOR-ROOM.md).
 - Entidades: adicionar `@ForeignKey(onDelete = CASCADE)` e `@Index` em `shorts.projectId`, `subtitles.shortId`, `exports.projectId/shortId`, `transcripts.projectId`. Trocar `REPLACE` por `ABORT`/`IGNORE` + `@Update` explícito.
 - **Migração 3 → 4**, `exportSchema = true`, `room.schemaLocation`, schemas versionados no repositório, e `MigrationTestHelper` no teste instrumentado (hoje o teste é manual).
 - `ShortEntity`: adicionar `intervalVersion`/`exportFingerprint`, `focusTrackJson` (opcional) e `subtitlesJson` persistidos pela análise.
@@ -242,6 +247,15 @@ Cada fase tem **entrega**, **critério de aceite** e **gate**. Uma fase só vira
 **Gate:** JVM (Room in-memory via Robolectric ou teste instrumentado) + migração.
 
 ### Fase 7 — Export e Batch robustos (P1)
+**Status: implementada (7.1 a 7.8). Gate pendente: build, `:domain:test`, instrumentado e aparelho arm64.** Detalhes: [`docs/fases/FASE-07-EXPORT-E-BATCH.md`](fases/FASE-07-EXPORT-E-BATCH.md).
+- [x] 7.1 Nome estável + `.part` + rename atômico + falha/cancelamento apagam só o `.part`.
+- [x] 7.2 Reuso por fingerprint + `probe`.
+- [x] 7.3 Foco persistido.
+- [x] 7.4 Legendas persistidas.
+- [x] 7.5 Estilo de legenda respeitado + `ORIGINAL` removido.
+- [x] 7.6 Lote persistido (`export_batches`, migração 4→5, progresso, retomada).
+- [x] 7.7 Worker fiel + foreground/manifest.
+- [x] 7.8 Cancelamento (flag `cancelled`, token por lote).
 - Nome de arquivo estável e único: `exports/<projectId>/<shortId>_<platform>_<quality>_<res>_<fps>_<fingerprint>.mp4`, em arquivo `.part` e `rename` atômico no final.
 - Falha ou cancelamento apagam **só** o `.part` do próprio export. Nunca arquivo `done` de outra exportação.
 - Reuso de `done` só quando `fingerprint` (intervalo + estilo + foco + parâmetros) coincide **e** o arquivo passa pela validação (`probe`).
@@ -256,6 +270,7 @@ Cada fase tem **entrega**, **critério de aceite** e **gate**. Uma fase só vira
 **Gate:** JVM com fakes + instrumentado em arm64.
 
 ### Fase 8 — Trends: separar dado de inferência (P1)
+**Status: implementada (8.1 a 8.4). Gate pendente: `:domain:test` e compilação Android no CI.** Detalhes: [`docs/fases/FASE-08-TRENDS.md`](fases/FASE-08-TRENDS.md).
 - `TrendCard` ganha `origin: TrendOrigin { OFFICIAL_API, AI_INFERENCE, LINK_ONLY }` e `metricsVerified: Boolean`. `views`/`engagement` só podem ser preenchidos quando `origin == OFFICIAL_API`.
 - `GrokProvider.parseTrends`: nunca copiar `views`/`engagement` do LLM para campos de métrica. Se quiser exibir, vão em `aiEstimate` com rótulo "estimativa da IA" na UI.
 - `TrendProvider.isAvailable()` → `capability: ProviderCapability`. `GrokTrendProvider` = `AI_INFERENCE`. Os demais = `LINK_ONLY` até existir integração real.
@@ -266,12 +281,14 @@ Cada fase tem **entrega**, **critério de aceite** e **gate**. Uma fase só vira
 **Gate:** JVM.
 
 ### Fase 9 — Importação (P2)
+**Status: implementada (9.1 a 9.4). Gate pendente: `:domain:test`, `:data:testDebugUnitTest` e CI.** Detalhes: [`docs/fases/FASE-09-IMPORTACAO.md`](fases/FASE-09-IMPORTACAO.md).
 - Hoje: SAF copia sem limite nem checagem de espaço; download usa `OkHttpClient` sem timeout; `partialFile.copyTo` duplica o arquivo (pico de 2× disco); `Range` não valida `Content-Range`.
 - Checar espaço livre antes de copiar/baixar; timeouts explícitos; `rename` em vez de `copyTo`; validar `Content-Range`/`ETag` na retomada; validar o resultado com `MediaValidator` + `probe` **antes** de criar o projeto; extensão a partir de `Content-Type`/`ffprobe`, não da URL.
 - Testes com `MockWebServer`: HTML, 0 bytes, 206 com retomada, limite de tamanho, queda no meio.
 
 ### Fase 10 — QA, observabilidade e release (P2)
-- Cobertura: `FfmpegFilterBuilder` (golden), cancelamento, `ShortsProcessingManager`, trends, Room (DAOs + migração com `MigrationTestHelper`), importador.
+**Status histórico:** detalhes de planejamento e evidências da integração atual estão em [`docs/fases/FASE-10-QA-E-RELEASE.md`](fases/FASE-10-QA-E-RELEASE.md) e no relatório de validação.
+- Cobertura: `FfmpegFilterBuilder` (golden), cancelamento, `ShortsProcessingManager`, trends, Room (DAOs + migração com SQLite legado aberto pelo Room), importador.
 - Lint: `lintDebug` e `lintRelease` sem erros novos; baseline versionado se necessário.
 - Release: validar regras de R8 (`minify` + `shrinkResources` ligados): Room, Hilt, kotlinx.serialization, ML Kit, WorkManager. As regras atuais (`-keep ...entity.**`, `...domain.model.**`) são mínimas. Rodar o APK release num aparelho.
 - `allowBackup`: desligar ou excluir `SecureKeyStore` das regras de backup.

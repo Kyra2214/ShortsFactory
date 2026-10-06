@@ -44,16 +44,18 @@ fun ShortEditorScreen(
     startMs: Long,
     endMs: Long,
     videoDurationMs: Long,
-    onSave: (title: String, description: String, hashtags: String, cta: String, startMs: Long, endMs: Long) -> Unit,
+    error: String?,
+    onSave: (title: String, hook: String, description: String, hashtags: String, cta: String, startMs: Long, endMs: Long) -> Unit,
     onPreview: (shortId: Long, localPath: String?) -> Unit,
     onBack: () -> Unit
 ) {
-    var titleText by remember { mutableStateOf(title) }
-    var descriptionText by remember { mutableStateOf(description) }
-    var hashtagsText by remember { mutableStateOf(hashtags) }
-    var ctaText by remember { mutableStateOf(cta) }
-    var startText by remember { mutableFloatStateOf(startMs.toFloat()) }
-    var endText by remember { mutableFloatStateOf(endMs.toFloat()) }
+    var titleText by remember(title) { mutableStateOf(title) }
+    var hookText by remember(hook) { mutableStateOf(hook) }
+    var descriptionText by remember(description) { mutableStateOf(description) }
+    var hashtagsText by remember(hashtags) { mutableStateOf(hashtags) }
+    var ctaText by remember(cta) { mutableStateOf(cta) }
+    var startText by remember(startMs) { mutableFloatStateOf(startMs.toFloat()) }
+    var endText by remember(endMs) { mutableFloatStateOf(endMs.toFloat()) }
 
     Scaffold(
         topBar = {
@@ -82,9 +84,16 @@ fun ShortEditorScreen(
             )
             Spacer(Modifier.height(8.dp))
             OutlinedTextField(
+                value = hookText,
+                onValueChange = { hookText = it },
+                label = { Text("Gancho") },
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
                 value = descriptionText,
                 onValueChange = { descriptionText = it },
-                label = { Text("Descrição / gancho") },
+                label = { Text("Descrição") },
                 modifier = Modifier.fillMaxWidth()
             )
             Spacer(Modifier.height(8.dp))
@@ -122,6 +131,11 @@ fun ShortEditorScreen(
                 Text(formatDuration(endText.toLong()), style = MaterialTheme.typography.bodySmall)
             }
 
+            if (error != null) {
+                Spacer(Modifier.height(8.dp))
+                Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
+            }
+
             Spacer(Modifier.height(16.dp))
             Row(modifier = Modifier.fillMaxWidth()) {
                 OutlinedButton(
@@ -131,7 +145,7 @@ fun ShortEditorScreen(
                     Text("Visualizar")
                 }
                 Button(
-                    onClick = { onSave(titleText, descriptionText, hashtagsText, ctaText, startText.toLong(), endText.toLong()) },
+                    onClick = { onSave(titleText, hookText, descriptionText, hashtagsText, ctaText, startText.toLong(), endText.toLong()) },
                     modifier = Modifier.weight(1f).padding(start = 4.dp)
                 ) {
                     Text("Salvar")

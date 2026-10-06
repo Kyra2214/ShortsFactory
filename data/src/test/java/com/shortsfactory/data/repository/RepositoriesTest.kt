@@ -75,7 +75,7 @@ class RepositoriesTest {
     }
 
     @Test
-    fun `metadata update persists only editable fields and interval`() = runTest {
+    fun `metadata update persists editable fields including hook, and interval`() = runTest {
         val existing = ShortEntity(
             id = 7L,
             projectId = 1L,
@@ -90,10 +90,12 @@ class RepositoriesTest {
             status = "done"
         )
         val dao = FakeShortDao(existing)
-        ShortRepository(dao).updateMetadata(7L, "new", "description", "#tag", "cta", 100L, 900L)
+        ShortRepository(dao).updateMetadata(7L, "new", " new hook ", "description", "#tag", "cta", 100L, 900L)
 
         assertEquals("new", dao.updated.title)
-        assertEquals("original hook", dao.updated.hook)
+        assertEquals("new hook", dao.updated.hook)
+        assertEquals("original topic", dao.updated.topic)
+        assertEquals("original reason", dao.updated.reason)
         assertEquals("description", dao.updated.description)
         assertEquals("#tag", dao.updated.hashtags)
         assertEquals("cta", dao.updated.cta)
@@ -101,6 +103,88 @@ class RepositoriesTest {
         assertEquals(900L, dao.updated.endMs)
         assertEquals("/exports/old.mp4", dao.updated.localPath)
         assertEquals("done", dao.updated.status)
+    }
+
+    @Test
+    fun `short export progress keeps the error until an explicit transition`() = runTest {
+        val dao = FakeShortDao(ShortEntity(id = 7L, projectId = 1L, startMs = 0L, endMs = 5_000L, score = 1f,
+            title = "t", hook = "h", topic = "x", reason = "r", status = "failed", exportError = "falhou antes"))
+        val repository = ShortRepository(dao)
+
+        repository.updateExportProgress(7L, "queued", 0f)
+        assertEquals("falhou antes", dao.updated.exportError)
+
+        repository.updateExportProgress(7L, "failed", 0f, "novo erro")
+        assertEquals("novo erro", dao.updated.exportError)
+
+        repository.updateExportState(7L, null, "cancelled")
+        assertEquals("novo erro", dao.updated.exportError)
+
+        repository.updateExportProgress(7L, "processing", 0f)
+        assertNull(dao.updated.exportError)
+
+        repository.updateExportProgress(7L, "failed", 0f, "outro erro")
+        repository.updateExportState(7L, "/exports/ok.mp4", "done")
+        assertNull(dao.updated.exportError)
+        assertEquals("/exports/ok.mp4", dao.updated.localPath)
+    }
+
+    @Test
+    fun `retry clears the completion time of the previous attempt`() = runTest {
+        val dao = FakeExportDao(
+            ExportEntity(id = 10L, projectId = 1L, platform = "yt", quality = "Normal", resolution = "r", fps = 30,
+                status = "failed", attemptCount = 1, startedAtMs = 100L, completedAtMs = 200L, errorMessage = "x")
+        )
+        val repository = ExportRepository(dao)
+
+        repository.markQueued(10L)
+        assertNull(dao.value.completedAtMs)
+        repository.markFailed(10L, "de novo")
+        assertEquals(true, dao.value.completedAtMs != null)
+
+        repository.markRunning(10L)
+        assertNull(dao.value.completedAtMs)
+        assertEquals(100L, dao.value.startedAtMs)
+        assertEquals(2, dao.value.attemptCount)
+    }
+
+    @Test
+    fun `candidate entity carries persisted subtitles and focus track`() {
+        val candidate = com.shortsfactory.domain.model.ShortCandidate(
+            score = 0.7f, startMs = 1_000L, endMs = 9_000L, title = "t", hook = "h", topic = "x", reason = "r",
+            focusTrack = com.shortsfactory.domain.pipeline.FocusTrack(
+                listOf(com.shortsfactory.domain.pipeline.FocusPoint(0L, 0.4f, 0.5f, 0.2f, 0.3f)),
+                com.shortsfactory.domain.pipeline.TrackingMethod.FACE_TRACKING
+            ),
+            subtitles = listOf(com.shortsfactory.domain.model.SubtitleSegment(0L, 1_500L, listOf("olá", "mundo")))
+        )
+        val entity = ShortRepository.candidateToEntity(3L, candidate)
+
+        assertEquals(3L, entity.projectId)
+        assertEquals("pending", entity.status)
+        assertEquals(0, entity.intervalVersion)
+        assertEquals(candidate.subtitles, CandidateArtifactsCodec.decodeSubtitles(entity.subtitlesJson))
+        assertEquals(candidate.focusTrack, CandidateArtifactsCodec.decodeFocusTrack(entity.focusTrackJson))
+    }
+
+    @Test
+    fun `candidate without subtitles or focus stores null so it is recomputed`() {
+        val entity = ShortRepository.candidateToEntity(
+            1L, com.shortsfactory.domain.model.ShortCandidate(0.5f, 0L, 5_000L, "t", "h", "x", "r")
+        )
+        assertNull(entity.subtitlesJson)
+        assertNull(entity.focusTrackJson)
+    }
+
+    @Test
+    fun `artifacts codec treats missing or corrupt json as absent`() {
+        assertNull(CandidateArtifactsCodec.decodeSubtitles(null))
+        assertNull(CandidateArtifactsCodec.decodeSubtitles(""))
+        assertNull(CandidateArtifactsCodec.decodeSubtitles("{nao e json"))
+        assertNull(CandidateArtifactsCodec.decodeFocusTrack("[]"))
+        assertNull(CandidateArtifactsCodec.decodeFocusTrack("""{"method":"INEXISTENTE","points":[{"timeMs":0,"centerX":0.5,"centerY":0.5,"width":1,"height":1}]}"""))
+        assertNull(CandidateArtifactsCodec.decodeFocusTrack("""{"method":"STATIC_CENTER","points":[]}"""))
+        assertEquals(emptyList<com.shortsfactory.domain.model.SubtitleSegment>(), CandidateArtifactsCodec.decodeSubtitles("[]"))
     }
 
     private class FakeTranscriptDao(
@@ -111,6 +195,7 @@ class RepositoriesTest {
             return 1L
         }
         override suspend fun getByProject(projectId: Long): TranscriptEntity? = value?.takeIf { it.projectId == projectId }
+        override suspend fun deleteByProject(projectId: Long) { value = value?.takeUnless { it.projectId == projectId } }
     }
 
     private class FakeExportDao(
@@ -127,6 +212,8 @@ class RepositoriesTest {
             flowOf(listOf(value).filter { it.projectId == projectId })
 
         override suspend fun getById(id: Long): ExportEntity? = value.takeIf { it.id == id }
+
+        override suspend fun deleteByShort(shortId: Long) = Unit
 
         override suspend fun getLatestForShort(
             projectId: Long,
@@ -149,6 +236,7 @@ class RepositoriesTest {
             replaceError: Boolean,
             startedAtMs: Long?,
             completedAtMs: Long?,
+            resetCompleted: Boolean,
             outputPath: String?
         ) {
             value = value.copy(
@@ -157,7 +245,7 @@ class RepositoriesTest {
                 attemptCount = attemptCount,
                 errorMessage = if (replaceError) errorMessage else value.errorMessage,
                 startedAtMs = startedAtMs ?: value.startedAtMs,
-                completedAtMs = completedAtMs ?: value.completedAtMs,
+                completedAtMs = if (resetCompleted) null else completedAtMs ?: value.completedAtMs,
                 outputPath = outputPath ?: value.outputPath
             )
         }
@@ -172,9 +260,13 @@ class RepositoriesTest {
         override suspend fun getByProject(projectId: Long): List<ShortEntity> = listOf(updated)
         override suspend fun getById(id: Long): ShortEntity? = updated.takeIf { it.id == id }
         override suspend fun update(entity: ShortEntity) { updated = entity }
-        override suspend fun updateMetadata(id: Long, title: String, description: String, hashtags: String, cta: String, startMs: Long, endMs: Long, updatedAtMs: Long) {
+        override suspend fun deleteByProject(projectId: Long) = Unit
+        override suspend fun updateMetadata(id: Long, title: String, hook: String, description: String, hashtags: String, cta: String, startMs: Long, endMs: Long, updatedAtMs: Long) {
+            // A invalidação por mudança de intervalo é SQL e é verificada em SQLite real
+            // (ProjectStoreInstrumentedTest); este fake só registra os campos recebidos.
             updated = updated.copy(
                 title = title,
+                hook = hook,
                 description = description,
                 hashtags = hashtags,
                 cta = cta,
@@ -183,12 +275,12 @@ class RepositoriesTest {
                 updatedAtMs = updatedAtMs
             )
         }
-        override suspend fun updateExportState(id: Long, status: String, progress: Float, error: String?, localPath: String?, updatedAtMs: Long) {
+        override suspend fun updateExportState(id: Long, status: String, progress: Float, error: String?, replaceError: Boolean, localPath: String?, updatedAtMs: Long) {
             updated = updated.copy(
                 localPath = localPath ?: updated.localPath,
                 status = status,
                 exportProgress = progress,
-                exportError = error,
+                exportError = if (replaceError) error else updated.exportError,
                 updatedAtMs = updatedAtMs
             )
         }
