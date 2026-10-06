@@ -72,3 +72,9 @@ As execuções anteriores do PR terminaram como canceladas antes de iniciar qual
 
 - O workflow valida o build e a migração Room num emulador x86_64; isso não substitui uma execução do FFmpeg arm64 num aparelho real. A validação instrumentada do binário foi adicionada, mas requer dispositivo arm64 para não ser ignorada.
 - A documentação do FFmpeg registra origem de compilação desconhecida para os binários de terceiros. Recompilar a partir de uma versão/tag rastreável e concluir a oferta do código-fonte correspondente continuam pendências antes de release/distribuição pública.
+
+## Atualização — integração das fases 11–12
+
+Em 2026-10-06, o snapshot `ShortsFactory-fase12-completa.zip` foi integrado em `feature/phase12-video-preview` e enviado ao [PR #4](https://github.com/Kyra2214/ShortsFactory/pull/4), aberto contra o `main` protegido. O `git diff --check` passou, os checksums FFmpeg conferiram e uma busca por padrões de credenciais não encontrou candidatos. O sandbox não possui Android SDK, então os testes e builds dependem da CI do GitHub.
+
+A primeira execução ([run 37524131187](https://github.com/Kyra2214/ShortsFactory/actions/runs/37524131187)) falhou em `Run all JVM unit tests` durante a compilação Kotlin; lint, APKs e instrumentação foram ignorados. A causa foi `core/ui/Type.kt`: o construtor `TextStyle` recebia `FontFamily`/`FontWeight` em posições incompatíveis com a API do Compose. A correção usa argumentos nomeados `fontFamily` e `fontWeight`. O reenvio está pendente; por isso nenhum APK da fase 12 foi gerado ainda. O checklist de reprodução em aparelho real continua pendente mesmo após a CI.

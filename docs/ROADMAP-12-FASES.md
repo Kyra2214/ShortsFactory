@@ -1,6 +1,6 @@
 # Roadmap de implementação — 12 fases
 
-> **Estado atual:** PR #3 foi mesclado em `main` no commit `dae752f`; o run pós-merge [37447860122](https://github.com/Kyra2214/ShortsFactory/actions/runs/37447860122) passou em testes JVM, lint, builds e 9 testes instrumentados Room no API 35. A implementação das fases 11–12 do ZIP recebido está agora em uma branch de integração e aguarda o workflow próprio; a entrega do APK será obtida desse build. O checklist funcional em aparelho arm64 real permanece pendente.
+> **Estado atual:** PR #3 foi mesclado em `main` no commit `dae752f`; o run pós-merge [37447860122](https://github.com/Kyra2214/ShortsFactory/actions/runs/37447860122) passou em testes JVM, lint, builds e 9 testes instrumentados Room no API 35. A implementação das fases 11–12 está no PR #4. O primeiro run ([37524131187](https://github.com/Kyra2214/ShortsFactory/actions/runs/37524131187)) detectou assinaturas inválidas de `TextStyle` no tema Compose; a correção foi aplicada e aguarda novo workflow. O APK será entregue do build aprovado. O checklist funcional em aparelho arm64 real permanece pendente.
 >
 > **Fonte operacional:** `docs/VALIDACAO-INTEGRACAO-FASE-02.md` e os relatórios em `docs/fases/`. `docs/AUDITORIA-E-FASES.md` é uma auditoria estática histórica de um snapshot anterior; não representa sozinha o estado atual.
 

@@ -1,6 +1,6 @@
 # Fase 12 — Leitor de vídeo interno
 
-**Status: implementada (5/5). Não compilada; validação pela CI e checklist em aparelho pendentes.**
+**Status: implementada (5/5). A primeira CI do PR #4 (run 37524131187) encontrou chamadas inválidas de `TextStyle` no tema; família e peso foram trocados para argumentos nomeados. A nova CI/build do APK está pendente; o checklist em aparelho também.**
 
 Objetivo: prévia fiel ao que será exportado e, no futuro, publicado (aprovação antes de postar). A prévia fiel usa o mesmo pipeline da exportação (`processClip`), em resolução menor; as legendas escalam por `targetWidth/1080`, então enquadramento, legendas e tempos coincidem. Pixels/bitrate diferem.
 

@@ -2,6 +2,7 @@
 
 ## Fase 12 — Leitor de vídeo interno (5/5, validação pela CI pendente)
 - 12.5 Fechamento: `PreviewClipRange` (domain) usado pela prévia rápida, `PlayablePath.isInside` extraído, 12 testes JVM novos (`PreviewClipRangeTest`, `PlayablePathTest`), `clipEndMs` opcional no `SfVideoPlayer` e checklist em aparelho (`docs/fases/FASE-12-CHECKLIST-APARELHO.md`). Suíte completa não executada neste ambiente (Gradle sem rede); fica para a CI.
+- Primeiro workflow do PR #4 (run [37524131187](https://github.com/Kyra2214/ShortsFactory/actions/runs/37524131187)) encontrou erro de compilação no tema Compose: `TextStyle` recebia família/peso por posição, com assinaturas incompatíveis. Corrigido em `core/ui/Type.kt` usando `fontFamily`/`fontWeight` nomeados; nova CI ainda pendente, portanto nenhum APK da fase 12 foi gerado por esse run.
 - 12.4 Assistir exportados: `CandidateUi.exportedPath`, botão "Assistir exportado" nos cortes concluídos e diálogo com `SfVideoPlayer` em `ProjectScreen`; `:feature-projects` depende de `:feature-player`. Não compilado/testado.
 - 12.3 Prévia fiel: `assembleClipSpec` compartilhado com a exportação, `ClipPreviewManager` (540x960, cache por fingerprint em `cache/preview`, cancelável), botão "Prévia fiel" e diálogo com progresso/reprodução no Editor. Não compilado/testado.
 - 12.2 Prévia rápida no Editor: trecho em loop em moldura 9:16 (`SfVideoPlayer` com `clipStartMs`/`clipEndMs`/`fillFrame`), atualizada ao soltar o `RangeSlider`; `EditorViewModel.videoPath`; `:feature-editor` depende de `:feature-player`. Não compilado/testado.
