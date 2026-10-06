@@ -1,6 +1,6 @@
 # Fase 11 — Redesign da interface
 
-**Status: submódulos 11.1 a 11.7 implementados (7/7). Não compilado/testado; validação pela CI.**
+**Status: submódulos 11.1 a 11.7 implementados (7/7). CI aprovada no workflow 37530672897; validação em aparelho permanece pendente.**
 
 Escopo: somente composables e tema. ViewModels, rotas, domínio e dados permanecem inalterados. Sem novas dependências.
 
@@ -65,5 +65,4 @@ Escopo: somente composables e tema. ViewModels, rotas, domínio e dados permanec
 - Mensagem de `GrokProvider` sem chave agora aponta para "Ajustes, IA e chaves".
 
 ## Fechamento da fase
-- Gates pendentes: suíte completa (`:domain:test`, `testDebugUnitTest`, `lintDebug lintRelease`, builds e testes instrumentados) só executáveis na CI; nenhuma execução local possível (sem Gradle/SDK).
-- Pontos a verificar na CI: APIs de Material 3 1.3.1 usadas (`RangeSlider`, `SingleChoiceSegmentedButtonRow`, `SegmentedButton`, `FilterChip`), ícones `Icons.AutoMirrored.Filled.TrendingUp`/`KeyboardArrowRight` e `Icons.Filled.Cancel`/`Error`, `Icons.Outlined.RadioButtonUnchecked`.
+- Gates concluídos no workflow 37530672897: `:domain:test`, `testDebugUnitTest`, `lintDebug`, `lintRelease`, builds debug/release e testes instrumentados Room. A validação visual em aparelho permanece pendente.

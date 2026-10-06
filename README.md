@@ -8,6 +8,8 @@ A base atual está estruturada para uma evolução próxima de produção. O app
 
 A análise é agendada como trabalho único por projeto. Seu estado persistente pode ser `idle`, `queued`, `running`, `done`, `failed` ou `cancelled`, com progresso, mensagem de erro, timestamp de atualização e retry controlado. A exportação mantém estado por item, progresso, tentativas, arquivo de saída e timestamps; o arquivo parcial é removido quando uma execução falha ou é cancelada.
 
+As Fases 11 e 12 estão na branch `feature/phase12-video-preview` e no [PR #4](https://github.com/Kyra2214/ShortsFactory/pull/4), validadas pelo [workflow 37530672897](https://github.com/Kyra2214/ShortsFactory/actions/runs/37530672897) no commit `6dd5565`. Até o merge do PR, o ZIP gerado por **Code → Download ZIP** sem selecionar uma branch corresponde à branch padrão `main` e não contém essas duas fases; para obter a entrega completa, selecione `feature/phase12-video-preview` no GitHub.
+
 ## Arquitetura
 
 | Módulo | Responsabilidade |

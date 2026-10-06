@@ -179,7 +179,6 @@ fun AppNavGraph(navController: NavHostController = rememberNavController()) {
             // Só volta depois de gravar com sucesso; intervalo inválido fica na tela com a mensagem.
             LaunchedEffect(saved) { if (saved) navController.popBackStack() }
             ShortEditorScreen(
-                shortId = shortId,
                 title = title,
                 hook = hook,
                 description = description,
@@ -194,7 +193,7 @@ fun AppNavGraph(navController: NavHostController = rememberNavController()) {
                 onSave = { title, hook, description, hashtags, cta, start, end ->
                     viewModel.saveMetadata(title, hook, description, hashtags, cta, start, end)
                 },
-                onPreview = { _, _ -> viewModel.renderPreview() },
+                onPreview = { viewModel.renderPreview() },
                 onCancelPreview = { viewModel.cancelPreview() },
                 onDismissPreview = { viewModel.dismissPreview() },
                 onBack = { navController.popBackStack() }

@@ -55,7 +55,6 @@ sealed interface PreviewUiState {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ShortEditorScreen(
-    shortId: Long,
     title: String,
     hook: String,
     description: String,
@@ -68,7 +67,7 @@ fun ShortEditorScreen(
     error: String?,
     previewState: PreviewUiState,
     onSave: (title: String, hook: String, description: String, hashtags: String, cta: String, startMs: Long, endMs: Long) -> Unit,
-    onPreview: (shortId: Long, localPath: String?) -> Unit,
+    onPreview: () -> Unit,
     onCancelPreview: () -> Unit,
     onDismissPreview: () -> Unit,
     onBack: () -> Unit
@@ -117,7 +116,7 @@ fun ShortEditorScreen(
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     OutlinedButton(
-                        onClick = { onPreview(shortId, null) },
+                        onClick = onPreview,
                         enabled = !rangeDirty && previewState !is PreviewUiState.Rendering,
                         modifier = Modifier.weight(1f).height(52.dp),
                         shape = MaterialTheme.shapes.medium
