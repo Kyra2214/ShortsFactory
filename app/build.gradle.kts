@@ -97,6 +97,7 @@ dependencies {
     ksp("com.google.dagger:hilt-android-compiler:2.56.2")
 
     implementation("androidx.work:work-runtime-ktx:2.10.0")
+    implementation("com.google.guava:guava:33.3.1-android")
     implementation("androidx.hilt:hilt-work:1.2.0")
     ksp("androidx.hilt:hilt-compiler:1.2.0")
 
