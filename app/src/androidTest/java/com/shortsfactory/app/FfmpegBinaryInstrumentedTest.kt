@@ -2,6 +2,12 @@ package com.shortsfactory.app
 
 import android.os.Build
 import androidx.test.platform.app.InstrumentationRegistry
+import com.shortsfactory.domain.pipeline.ProcessRunner
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
@@ -95,5 +101,35 @@ class FfmpegBinaryInstrumentedTest {
         val duration = Regex("""duration=([0-9.]+)""").find(probeOut)!!.groupValues[1].toDouble()
         assertTrue("Duração fora de 2s: $duration", duration in 1.8..2.3)
         outFile.delete()
+    }
+
+    /** Fase 3: cancelar o coroutine dono mata o ffmpeg real (PID some em < 2 s) e lança cancelamento. */
+    @Test
+    fun cancellingTheOwnerKillsTheRealFfmpegProcessWithinTwoSeconds() = runBlocking {
+        val ffmpeg = File(nativeDir, "libffmpeg.so")
+        assertTrue("libffmpeg.so ausente em nativeLibraryDir", ffmpeg.exists())
+        val started = CompletableDeferred<Process>()
+        val job = launch(Dispatchers.Default) {
+            // Fonte infinita (sem duration): só termina se for morto.
+            ProcessRunner.run(
+                command = listOf(
+                    ffmpeg.absolutePath, "-y", "-loglevel", "error", "-nostdin",
+                    "-re", "-f", "lavfi", "-i", "testsrc=size=640x360:rate=30",
+                    "-f", "null", "-"
+                ),
+                timeoutMs = 120_000L,
+                directory = context.cacheDir,
+                onStart = { started.complete(it) }
+            )
+        }
+        val process = withTimeout(10_000L) { started.await() }
+        assertTrue("o ffmpeg deveria estar rodando", process.isAlive)
+        Thread.sleep(500)
+
+        job.cancel()
+        withTimeout(2_000L) { job.join() }
+
+        assertTrue("o PID do ffmpeg deveria sumir em < 2 s", process.waitFor(2, TimeUnit.SECONDS))
+        assertTrue(job.isCancelled)
     }
 }

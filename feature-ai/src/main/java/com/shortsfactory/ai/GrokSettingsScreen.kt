@@ -178,6 +178,8 @@ fun GrokSettingsScreen(
                             val model = provider.lastSuccessfulModel ?: "modelo disponível"
                             val keyNumber = (provider.lastSuccessfulKeyIndex ?: 0) + 1
                             status = "Chaves salvas. Conexão validada com $model usando a chave $keyNumber."
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
                         } catch (e: Exception) {
                             status = "Não foi possível validar as chaves. Verifique a rede, a validade e os limites da conta xAI."
                         } finally {
@@ -245,6 +247,8 @@ fun GrokSettingsScreen(
                             keyStore.saveTranscriptionApiKey(transcriptionKey)
                             transcriptionKey = ""
                             transcriptionStatus = "OpenAI validada e salva. Ela será a primeira opção para análise e transcrição."
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
                         } catch (e: Exception) {
                             transcriptionStatus = "OpenAI não está disponível para esta chave. Verifique a conta e os limites."
                         } finally {

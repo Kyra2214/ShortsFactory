@@ -55,8 +55,8 @@ jobs:
       - name: Run all JVM unit tests
         run: ./gradlew :domain:test testDebugUnitTest --stacktrace --no-daemon --max-workers=2
 
-      - name: Run debug lint
-        run: ./gradlew lintDebug --stacktrace --no-daemon --max-workers=2
+      - name: Run debug and release lint
+        run: ./gradlew lintDebug lintRelease --stacktrace --no-daemon --max-workers=2
 
       - name: Assemble debug, release and Android test APKs
         run: ./gradlew assembleDebug assembleRelease :app:assembleDebugAndroidTest :data:assembleDebugAndroidTest --stacktrace --no-daemon --max-workers=2
@@ -115,8 +115,8 @@ jobs:
           target: google_apis
           arch: x86_64
           profile: pixel_2
-          # The hosted runner had 7.08 GB free, below the default 7.37 GB userdata requirement.
-          disk-size: 6G
+          # Keep userdata within the hosted runner's available disk space.
+          disk-size: 4G
           force-avd-creation: true
           emulator-boot-timeout: 1200
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none

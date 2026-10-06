@@ -11,6 +11,8 @@ import com.shortsfactory.data.local.entity.ShortEntity
 import com.shortsfactory.data.repository.ProjectRepository
 import com.shortsfactory.data.repository.ShortRepository
 import com.shortsfactory.data.repository.VideoImporter
+import com.shortsfactory.domain.pipeline.MediaMetadata
+import com.shortsfactory.domain.pipeline.MediaValidator
 import com.shortsfactory.domain.pipeline.PipelineProgress
 import com.shortsfactory.domain.pipeline.PipelineStage
 import com.shortsfactory.domain.pipeline.StageProgress
@@ -78,7 +80,29 @@ class ProjectViewModel @Inject constructor(
                 }
                 when (result) {
                     is VideoImporter.ImportResult.Success -> {
-                        val info = videoEngine.probe(result.localPath)
+                        val info = try {
+                            videoEngine.probe(result.localPath)
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            File(result.localPath).delete()
+                            throw e
+                        } catch (e: Exception) {
+                            File(result.localPath).delete()
+                            _error.value = "O arquivo importado não é um vídeo válido."
+                            _progress.value = null
+                            return@launch
+                        }
+                        val validation = MediaValidator.validate(
+                            MediaMetadata(
+                                result.localPath, File(result.localPath).length(),
+                                info.durationMs, info.width, info.height, info.hasAudio
+                            )
+                        )
+                        if (!validation.valid) {
+                            File(result.localPath).delete()
+                            _error.value = validation.message
+                            _progress.value = null
+                            return@launch
+                        }
                         val projectName = File(result.localPath).nameWithoutExtension.ifEmpty { "Novo projeto" }
                         val projectId = projectRepository.insert(
                             ProjectEntity(
@@ -108,6 +132,8 @@ class ProjectViewModel @Inject constructor(
                         _progress.value = null
                     }
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _error.value = e.message ?: "Falha ao importar o vídeo."
                 _progress.value = null
@@ -128,8 +154,8 @@ class ProjectViewModel @Inject constructor(
     }
 
     fun cancelAnalysis() {
+        // Cancelar o trabalho cancela o coroutine do worker, que encerra o ffmpeg dele e grava o estado.
         _createdProjectId.value?.let(workScheduler::cancelAnalysis)
-        videoEngine.cancel()
     }
 
     fun changePreset(preset: String) {
@@ -143,7 +169,7 @@ class ProjectViewModel @Inject constructor(
     override fun onCleared() {
         candidateObservationJob?.cancel()
         analysisObservationJob?.cancel()
-        videoEngine.cancel()
+        // A análise roda no WorkManager e sobrevive ao ViewModel: não há nada global para cancelar aqui.
         super.onCleared()
     }
 

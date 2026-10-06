@@ -181,6 +181,8 @@ fun TrendHunterScreen(
                                 niche = niche,
                                 period = period
                             )
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
                         } catch (e: Exception) {
                             error = "Falha na caçada: ${e.message}"
                         } finally {
@@ -244,7 +246,7 @@ private fun HunterCardItem(
                 Text("🔥 ${card.title}", style = MaterialTheme.typography.titleSmall)
                 Spacer(Modifier.weight(1f))
                 Text(
-                    "Relevância: ${card.relevanceScore}",
+                    if (card.order > 0) "Ordem: #${card.order}" else "",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary
                 )
@@ -254,8 +256,7 @@ private fun HunterCardItem(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            card.views?.let { Text("Visualizações: $it", style = MaterialTheme.typography.bodySmall) }
-            card.engagement?.let { Text("Engajamento: $it", style = MaterialTheme.typography.bodySmall) }
+            TrendCardInfo(card)
             Spacer(Modifier.height(8.dp))
             Row {
                 if (card.openable && card.sourceUrl.isNotEmpty()) {

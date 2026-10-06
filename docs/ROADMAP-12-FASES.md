@@ -1,6 +1,8 @@
 # Roadmap de implementação — 12 fases
 
-> **Estado real do projeto:** veja `docs/AUDITORIA-E-FASES.md` (auditoria e plano corrigido) e `docs/fases/` (relatório de cada fase executada). Este roadmap descreve a intenção original; várias fases aqui listadas não estavam funcionando quando foram marcadas como concluídas.
+> **Estado atual (integração das Fases 2–10):** implementação integrada na branch do PR #2. A validação local passou em `:domain:test` (139 testes, 0 falhas) e nas 5 verificações de crop com FFmpeg real. A CI anterior passou no job principal, mas o emulador ainda não iniciou por falta de espaço; a nova execução com AVD de 4 GB está pendente. A execução em aparelho arm64 continua pendente.
+>
+> **Fonte operacional:** `docs/VALIDACAO-INTEGRACAO-FASE-02.md` e os relatórios em `docs/fases/`. `docs/AUDITORIA-E-FASES.md` é uma auditoria estática histórica de um snapshot anterior; não representa sozinha o estado atual.
 
 Este documento é a referência operacional do ciclo. Uma fase só é considerada concluída quando o código executa o caminho real, os componentes faltantes são implementados e os testes/CI que cobrem o contrato passam.
 
@@ -90,7 +92,7 @@ Este documento é a referência operacional do ciclo. Uma fase só é considerad
 - Documentação alinhada ao comportamento real.
 
 ## Progresso (plano corrigido)
-Fase 0: implementada, gate de CI pendente. Fase 1: implementada, gate arm64 pendente. Fase 2: implementada (5/5), gates pendentes. Progresso geral: ~27% (3 de 11 fases implementadas; nenhum gate executado por falta de Gradle/aparelho).
+Fases 0–10: implementação integrada; 139 testes de `:domain` e 5 verificações com FFmpeg real passaram localmente. Job principal de CI anterior (testes JVM, lint e APKs) passou; migração instrumentada, lint/build do snapshot atual e execução arm64 aguardam validação. Não declarar o ciclo concluído até o workflow completo ficar verde.
 
 ## Regra de encerramento
 

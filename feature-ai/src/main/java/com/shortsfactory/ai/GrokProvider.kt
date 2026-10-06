@@ -2,12 +2,16 @@ package com.shortsfactory.ai
 
 import com.shortsfactory.core.SecureKeyStore
 import com.shortsfactory.domain.ai.AIProvider
+import com.shortsfactory.domain.ai.AiException
+import com.shortsfactory.domain.ai.AiHttpException
+import com.shortsfactory.domain.ai.isTransientFailure
 import com.shortsfactory.domain.model.AIAnalysisResult
 import com.shortsfactory.domain.model.ShortCandidate
 import com.shortsfactory.domain.model.SubtitleSegment
 import com.shortsfactory.domain.model.TrendCard
 import com.shortsfactory.domain.model.Transcript
 import com.shortsfactory.domain.pipeline.GenerationSummaryHint
+import com.shortsfactory.domain.trends.TrendResponseParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -102,7 +106,9 @@ internal open class GrokProvider(
 
     override suspend fun analyzeVideo(transcript: Transcript, hint: GenerationSummaryHint): AIAnalysisResult {
         val prompt = buildPrompt(transcript, hint)
-        return withFallback(prompt, ::parseAnalysis)
+        // Registra o provedor/modelo que de fato respondeu (não o "configurado").
+        val (result, model) = withFallbackTracked(prompt, ::parseAnalysis)
+        return result.copy(provider = config.displayName, model = model)
     }
 
     override suspend fun searchTrends(
@@ -129,13 +135,17 @@ internal open class GrokProvider(
      * Executa a mesma operação em cada combinação chave/modelo até obter uma resposta válida.
      * Erros 401/403/404/429/5xx e falhas de parsing não interrompem o fallback.
      */
-    private suspend fun <T> withFallback(prompt: String, transform: (String) -> T): T {
+    private suspend fun <T> withFallback(prompt: String, transform: (String) -> T): T =
+        withFallbackTracked(prompt, transform).first
+
+    private suspend fun <T> withFallbackTracked(prompt: String, transform: (String) -> T): Pair<T, String> {
         val configuredKeys = apiKeys()
         require(configuredKeys.isNotEmpty()) {
             "Nenhuma chave configurada para ${config.displayName}. Configure em Configurações → IA e chaves."
         }
 
         var lastError: Throwable? = null
+        var anyTransient = false
         configuredKeys.forEachIndexed { keyIndex, apiKey ->
             val discoveredModels = runCatching { listAvailableTextModels(apiKey) }
                 .getOrDefault(emptyList())
@@ -147,17 +157,21 @@ internal open class GrokProvider(
                     val result = transform(reply)
                     lastSuccessfulModel = model
                     lastSuccessfulKeyIndex = keyIndex
-                    return result
+                    return result to model
                 } catch (error: Throwable) {
                     if (error is kotlinx.coroutines.CancellationException) throw error
                     lastError = error
+                    if (error.isTransientFailure()) anyTransient = true
                 }
             }
         }
 
-        throw IllegalStateException(
+        // Transitória se QUALQUER tentativa falhou por rede/408/429/5xx: repetir mais tarde pode funcionar.
+        throw AiException(
             "Nenhuma chave/modelo disponível para ${config.displayName} no momento" +
-                (lastError?.message?.let { ": ${it.take(180)}" } ?: ".")
+                (lastError?.message?.let { ": ${it.take(180)}" } ?: "."),
+            transient = anyTransient,
+            cause = lastError
         )
     }
 
@@ -258,7 +272,7 @@ Não invente métricas. O objetivo é inspirar criação original, nunca reprodu
         val stream = if (statusCode in 200..299) connection.inputStream else connection.errorStream
         val response = stream?.bufferedReader()?.use { it.readText() } ?: ""
         if (statusCode !in 200..299) {
-            throw RuntimeException("xAI retornou erro $statusCode: ${response.take(200)}")
+            throw AiHttpException(statusCode, response)
         }
         return response
     }
@@ -270,8 +284,8 @@ Não invente métricas. O objetivo é inspirar criação original, nunca reprodu
             val obj = element.jsonObject
             ShortCandidate(
                 score = obj["score"]?.jsonPrimitive?.content?.toFloatOrNull() ?: 0f,
-                startMs = obj["startMs"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L,
-                endMs = obj["endMs"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L,
+                startMs = obj["startMs"]?.jsonPrimitive?.content?.toLongOrNull() ?: ShortCandidate.MISSING_MS,
+                endMs = obj["endMs"]?.jsonPrimitive?.content?.toLongOrNull() ?: ShortCandidate.MISSING_MS,
                 title = obj["title"]?.jsonPrimitive?.content ?: "",
                 hook = obj["hook"]?.jsonPrimitive?.content ?: "",
                 topic = obj["topic"]?.jsonPrimitive?.content ?: "",
@@ -294,27 +308,8 @@ Não invente métricas. O objetivo é inspirar criação original, nunca reprodu
         )
     }
 
-    private fun parseTrends(reply: String): List<TrendCard> {
-        val json = Json { ignoreUnknownKeys = true }
-        val root = json.parseToJsonElement(extractJson(extractMessageContent(reply))).jsonObject
-        return (root["trends"] ?: root["results"])?.jsonArray?.map { element ->
-            val obj = element.jsonObject
-            run {
-                val sourceUrl = obj["sourceUrl"]?.jsonPrimitive?.content ?: ""
-                val openable = obj["openable"]?.jsonPrimitive?.content == "true"
-                val verifiedSource = openable && sourceUrl.startsWith("http")
-                TrendCard(
-                    title = obj["title"]?.jsonPrimitive?.content ?: "",
-                    platform = obj["platform"]?.jsonPrimitive?.content ?: "",
-                    region = obj["region"]?.jsonPrimitive?.content ?: "",
-                    views = if (verifiedSource) obj["views"]?.jsonPrimitive?.takeIf { it.content != "null" }?.content else null,
-                    engagement = if (verifiedSource) obj["engagement"]?.jsonPrimitive?.takeIf { it.content != "null" }?.content else null,
-                    sourceUrl = sourceUrl,
-                    openable = openable
-                )
-            }
-        } ?: emptyList()
-    }
+    private fun parseTrends(reply: String): List<TrendCard> =
+        TrendResponseParser.parse(extractJson(extractMessageContent(reply)))
 
     private fun extractMessageContent(raw: String): String {
         val root = runCatching { Json.parseToJsonElement(raw).jsonObject }.getOrNull() ?: return raw

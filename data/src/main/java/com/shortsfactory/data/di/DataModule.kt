@@ -31,7 +31,9 @@ object DataModule {
         Room.databaseBuilder(context, ShortsDatabase::class.java, "shorts_factory.db")
             .addMigrations(
                 ShortsDatabase.MIGRATION_1_2,
-                ShortsDatabase.MIGRATION_2_3
+                ShortsDatabase.MIGRATION_2_3,
+                ShortsDatabase.MIGRATION_3_4,
+                ShortsDatabase.MIGRATION_4_5
             )
             .build()
 
@@ -41,6 +43,7 @@ object DataModule {
     @Provides fun aiAnalysisDao(db: ShortsDatabase): AIAnalysisDao = db.aiAnalysisDao()
     @Provides fun subtitleDao(db: ShortsDatabase): SubtitleDao = db.subtitleDao()
     @Provides fun exportDao(db: ShortsDatabase): ExportDao = db.exportDao()
+    @Provides fun exportBatchDao(db: ShortsDatabase): ExportBatchDao = db.exportBatchDao()
 
     @Provides @Singleton fun projectRepository(dao: ProjectDao) = ProjectRepository(dao)
     @Provides @Singleton fun shortRepository(dao: ShortDao) = ShortRepository(dao)
@@ -48,6 +51,9 @@ object DataModule {
     @Provides @Singleton fun aiAnalysisRepository(dao: AIAnalysisDao) = AIAnalysisRepository(dao)
     @Provides @Singleton fun subtitleRepository(dao: SubtitleDao) = SubtitleRepository(dao)
     @Provides @Singleton fun exportRepository(dao: ExportDao) = ExportRepository(dao)
+    @Provides @Singleton fun exportBatchRepository(dao: ExportBatchDao) = ExportBatchRepository(dao)
+
+    @Provides @Singleton fun projectStore(db: ShortsDatabase) = ProjectStore(db)
 
     @Provides @Singleton
     fun videoImporter(@ApplicationContext context: Context) = VideoImporter(context)

@@ -1,6 +1,7 @@
 package com.shortsfactory.domain.pipeline
 
 import com.shortsfactory.domain.ai.AIProvider
+import com.shortsfactory.domain.ai.isTransientFailure
 import com.shortsfactory.domain.model.AIAnalysisResult
 import com.shortsfactory.domain.model.DurationPreset
 import com.shortsfactory.domain.model.ShortCandidate
@@ -9,6 +10,12 @@ import com.shortsfactory.domain.model.SubtitleStyleConfig
 import com.shortsfactory.domain.model.Transcript
 import java.io.File
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.withContext
 
 /** Etapas da pipeline de análise. */
 enum class PipelineStage(val label: String) {
@@ -54,10 +61,12 @@ sealed class AnalysisOutcome {
     data class Success(
         val transcript: Transcript,
         val result: AIAnalysisResult,
-        val selected: List<ShortCandidate>
+        val selected: List<ShortCandidate>,
+        val discarded: List<DiscardedCandidate> = emptyList()
     ) : AnalysisOutcome()
 
-    data class Failed(val message: String) : AnalysisOutcome()
+    /** @param retryable falha transitória (rede, 408/429/5xx): repetir pode dar certo. */
+    data class Failed(val message: String, val retryable: Boolean = false) : AnalysisOutcome()
     data object Cancelled : AnalysisOutcome()
 }
 
@@ -78,6 +87,8 @@ class MediaAnalysisPipeline(
     private val audioExtractor: AudioExtractorService,
     private val transcription: TranscriptionService,
     private val videoEngine: VideoEngine? = null,
+    /** Diretório temporário desta análise (áudio e fragmentos); apagado inteiro ao terminar. */
+    private val audioWorkDir: File? = null,
     private val candidateScorer: CandidateScorer = CandidateScorer()
 ) {
 
@@ -94,80 +105,117 @@ class MediaAnalysisPipeline(
         suspend fun update(stage: PipelineStage, state: StageState, progress: Float = 0f, message: String? = null) {
             onStageUpdate(StageProgress(stage, state, progress, message))
         }
+        // Inicia uma etapa: respeita cancelamento entre etapas (a etapa que ia começar fica CANCELLED,
+        // e a anterior mantém COMPLETED) e registra o início.
+        suspend fun begin(stage: PipelineStage) {
+            currentStage = stage
+            currentCoroutineContext().ensureActive()
+            update(stage, StageState.PROCESSING)
+        }
 
+        val workDir = audioWorkDir ?: File(File(videoPath).absoluteFile.parentFile, ".analysis_" + File(videoPath).name)
+        val audioPath = File(workDir, "audio.m4a").absolutePath
+        var videoDurationMs = 0L
         try {
-            currentStage = PipelineStage.VideoInput
-            update(currentStage, StageState.PROCESSING)
+            begin(PipelineStage.VideoInput)
+            // Preset desconhecido falha aqui, antes de qualquer etapa cara (sem default silencioso).
+            val preset = DurationPreset.fromKey(config.preset)
             val input = validateInput(videoPath)
-            update(currentStage, StageState.COMPLETED, 1f, input.width.toString() + "x" + input.height + ", " + input.durationMs + "ms")
+            videoDurationMs = input.durationMs
+            update(PipelineStage.VideoInput, StageState.COMPLETED, 1f, input.width.toString() + "x" + input.height + ", " + input.durationMs + "ms")
 
-            val audioPath = videoPath + ".analysis.m4a"
-            currentStage = PipelineStage.AudioExtraction
-            update(currentStage, StageState.PROCESSING)
+            begin(PipelineStage.AudioExtraction)
+            workDir.mkdirs()
             audioExtractor.extract(videoPath, audioPath)
-            update(currentStage, StageState.COMPLETED, 1f)
+            update(PipelineStage.AudioExtraction, StageState.COMPLETED, 1f)
 
-            currentStage = PipelineStage.Transcription
-            update(currentStage, StageState.PROCESSING)
+            begin(PipelineStage.Transcription)
             val transcript = transcription.transcribe(audioPath)
-            update(currentStage, StageState.COMPLETED, 1f)
+            check(transcript.segments.isNotEmpty()) { "A transcrição não contém fala." }
+            update(PipelineStage.Transcription, StageState.COMPLETED, 1f)
 
-            currentStage = PipelineStage.AIAnalysis
-            update(currentStage, StageState.PROCESSING)
+            begin(PipelineStage.AIAnalysis)
             val result = aiProvider.analyzeVideo(transcript, GenerationSummaryHint(config.preset))
-            update(currentStage, StageState.COMPLETED, 1f)
+            update(PipelineStage.AIAnalysis, StageState.COMPLETED, 1f)
 
-            currentStage = PipelineStage.CandidateSelection
-            update(currentStage, StageState.PROCESSING)
-            val rescored = result.candidates.map { candidate ->
-                candidateScorer.score(candidate, transcript, maxDurationForPreset(config.preset))
+            begin(PipelineStage.CandidateSelection)
+            // A saída da IA é entrada não confiável: descarta o que não existe no vídeo/transcrição.
+            val sanitized = AiResponseSanitizer.sanitize(result.candidates, videoDurationMs, transcript)
+            check(sanitized.kept.isNotEmpty()) {
+                "A IA não devolveu nenhum candidato válido (${sanitized.summary()})."
             }
-            val selected = candidateSelector.select(rescored, config)
-            update(currentStage, StageState.COMPLETED, 1f)
+            val rescored = sanitized.kept.map { candidate ->
+                candidateScorer.score(candidate, transcript, preset.maxMs)
+            }
+            val selection = candidateSelector.selectWithReport(
+                rescored,
+                config,
+                videoDurationMs = videoDurationMs,
+                suggestedDurationMs = result.suggestedDurationMs
+            )
+            val selected = selection.selected
+            check(selected.isNotEmpty()) {
+                "Nenhum candidato atende às regras de seleção (" + selection.summary() + ")."
+            }
+            update(
+                PipelineStage.CandidateSelection,
+                StageState.COMPLETED,
+                1f,
+                sanitized.summary() + "; " + selection.summary()
+            )
 
-            currentStage = PipelineStage.SubtitleGeneration
-            update(currentStage, StageState.PROCESSING)
+            begin(PipelineStage.SubtitleGeneration)
             val withSubtitles = selected.map { candidate ->
                 candidate.copy(subtitles = buildSubtitles(candidate, transcript))
             }
-            update(currentStage, StageState.COMPLETED, 1f, withSubtitles.sumOf { it.subtitles.size }.toString() + " segmentos")
+            update(PipelineStage.SubtitleGeneration, StageState.COMPLETED, 1f, withSubtitles.sumOf { it.subtitles.size }.toString() + " segmentos")
 
-            currentStage = PipelineStage.FocusTracking
-            update(currentStage, StageState.PROCESSING)
+            begin(PipelineStage.FocusTracking)
             val withFocus = withSubtitles.map { candidate ->
                 candidate.copy(
                     focusTrack = videoEngine?.detectFocusTrack(videoPath, candidate.startMs, candidate.endMs)
                         ?: staticCenterTrack(candidate)
                 )
             }
-            update(currentStage, StageState.COMPLETED, 1f, withFocus.size.toString() + " trilhas")
+            update(PipelineStage.FocusTracking, StageState.COMPLETED, 1f, withFocus.size.toString() + " trilhas")
 
-            return AnalysisOutcome.Success(transcript, result.copy(candidates = withFocus), withFocus)
+            return AnalysisOutcome.Success(transcript, result.copy(candidates = withFocus), withFocus, sanitized.discarded)
         } catch (ce: CancellationException) {
-            currentStage?.let { failed ->
-                update(failed, StageState.CANCELLED, message = "Análise cancelada.")
-                cancelPendingStages(failed, ::update)
+            // Cancelamento real do coroutine: o estado final é gravado em NonCancellable, porque
+            // `update` chama funções suspend (Room/WorkManager) que falhariam num coroutine já cancelado.
+            // Exceção: TimeoutCancellationException com o coroutine ainda ativo é um tempo limite interno
+            // (falha da etapa), não cancelamento do usuário.
+            if (ce is TimeoutCancellationException && currentCoroutineContext().isActive) {
+                return failed(currentStage, ce, ::update)
+            }
+            withContext(NonCancellable) {
+                currentStage?.let { interrupted ->
+                    update(interrupted, StageState.CANCELLED, message = "Análise cancelada.")
+                    cancelPendingStages(interrupted, ::update)
+                }
             }
             return AnalysisOutcome.Cancelled
         } catch (e: Exception) {
-            val message = e.message ?: "Erro desconhecido"
-            currentStage?.let { failed ->
-                update(failed, StageState.FAILED, message = message)
-                cancelPendingStages(failed, ::update, "Ignorada porque uma etapa anterior falhou.")
-            }
-            return AnalysisOutcome.Failed("Falha em ${currentStage?.label ?: "etapa desconhecida"}: $message")
+            return failed(currentStage, e, ::update)
         } finally {
-            File(videoPath + ".analysis.m4a").delete()
+            workDir.deleteRecursively()
         }
     }
 
-    private fun maxDurationForPreset(preset: String): Long? = when (preset) {
-        "15s" -> DurationPreset.FifteenSeconds.maxMs
-        "30s" -> DurationPreset.ThirtySeconds.maxMs
-        "45s" -> DurationPreset.FortyFiveSeconds.maxMs
-        "60s" -> DurationPreset.SixtySeconds.maxMs
-        "90s" -> DurationPreset.NinetySeconds.maxMs
-        else -> null
+    private suspend fun failed(
+        stage: PipelineStage?,
+        error: Exception,
+        update: suspend (PipelineStage, StageState, Float, String?) -> Unit
+    ): AnalysisOutcome.Failed {
+        val retryable = error.isTransientFailure()
+        val message = error.message ?: "Erro desconhecido"
+        withContext(NonCancellable) {
+            stage?.let { failedStage ->
+                update(failedStage, StageState.FAILED, 0f, message)
+                cancelPendingStages(failedStage, update, "Ignorada porque uma etapa anterior falhou.")
+            }
+        }
+        return AnalysisOutcome.Failed("Falha em ${stage?.label ?: "etapa desconhecida"}: $message", retryable)
     }
 
     private suspend fun cancelPendingStages(
@@ -181,12 +229,22 @@ class MediaAnalysisPipeline(
         }
     }
 
-    private fun validateInput(videoPath: String): InputVideoInfo {
+    /**
+     * Valida a entrada ANTES de qualquer estágio caro: arquivo, tamanho, duração, resolução e áudio
+     * ([MediaValidator]). Sem motor de vídeo só é possível checar o arquivo.
+     */
+    private suspend fun validateInput(videoPath: String): InputVideoInfo {
         require(videoPath.isNotBlank()) { "O caminho do vídeo está vazio." }
-        val file = java.io.File(videoPath)
+        val file = File(videoPath)
         require(file.exists() && file.isFile) { "Vídeo de entrada não encontrado: " + videoPath }
-        val engine = videoEngine
-        return engine?.probe(videoPath) ?: InputVideoInfo(videoPath, 0L, 0, 0, 0.0, true)
+        require(file.length() > 0L) { "O arquivo de vídeo está vazio ou indisponível." }
+        val engine = videoEngine ?: return InputVideoInfo(videoPath, 0L, 0, 0, 0.0, true)
+        val info = engine.probe(videoPath)
+        val validation = MediaValidator.validate(
+            MediaMetadata(videoPath, file.length(), info.durationMs, info.width, info.height, info.hasAudio)
+        )
+        require(validation.valid) { validation.message }
+        return info
     }
 
     private fun buildSubtitles(candidate: ShortCandidate, transcript: Transcript): List<SubtitleSegment> =
@@ -218,43 +276,6 @@ enum class TrackingMethod { STATIC_CENTER, FACE_TRACKING }
 /** Trilha de foco ao longo do trecho. */
 data class FocusTrack(val points: List<FocusPoint>, val method: TrackingMethod)
 
-/** Seleção de candidatos com remoção de sobreposição. */
-class CandidateSelector {
-
-    fun select(candidates: List<ShortCandidate>, config: GenerationConfig): List<ShortCandidate> {
-        val limit = config.maxCandidates.coerceAtLeast(0)
-        if (limit == 0) return emptyList()
-
-        val sorted = candidates
-            .asSequence()
-            .filter { it.startMs >= 0L && it.endMs > it.startMs }
-            .sortedByDescending { it.score }
-            .toList()
-        val maxMs = maxDurationFor(config.preset)
-        if (maxMs == null) return sorted.take(limit)
-
-        val picked = mutableListOf<ShortCandidate>()
-        for (candidate in sorted) {
-            if (picked.size >= limit) break
-            val duration = candidate.endMs - candidate.startMs
-            if (duration > maxMs) continue
-            val overlaps = picked.any { it.endMs > candidate.startMs && it.startMs < candidate.endMs }
-            if (!overlaps) picked += candidate
-        }
-        return picked
-    }
-
-    private fun maxDurationFor(preset: String): Long? = when (preset) {
-        "15s" -> DurationPreset.FifteenSeconds.maxMs
-        "30s" -> DurationPreset.ThirtySeconds.maxMs
-        "45s" -> DurationPreset.FortyFiveSeconds.maxMs
-        "60s" -> DurationPreset.SixtySeconds.maxMs
-        "90s" -> DurationPreset.NinetySeconds.maxMs
-        "ai" -> null
-        else -> DurationPreset.ThirtySeconds.maxMs
-    }
-}
-
 /** Especificação de clipe para processamento. */
 data class ClipSpec(
     val inputPath: String,
@@ -282,12 +303,16 @@ data class InputVideoInfo(
 
 /** Interface do motor de vídeo. */
 interface VideoEngine {
-    fun cancel()
-    fun probe(path: String): InputVideoInfo
+    /**
+     * Todas as operações respeitam o cancelamento do coroutine que as chamou: ao cancelar, o processo
+     * externo do PRÓPRIO chamador é encerrado e [CancellationException] é lançada. Não existe `cancel()`
+     * global; cancele o `Job` do dono. Falhas do processo viram [FfmpegFailedException].
+     */
+    suspend fun probe(path: String): InputVideoInfo
     suspend fun extractAudio(videoPath: String, outputPath: String)
     suspend fun splitAudio(audioPath: String, outputDir: String, chunkDurationMs: Long): List<String>
     suspend fun processClip(spec: ClipSpec, onProgress: (Float) -> Unit = {})
     suspend fun detectFocusTrack(videoPath: String, startMs: Long, endMs: Long): FocusTrack
     suspend fun extractFrame(videoPath: String, timeMs: Long, outputPath: String)
-    fun isAlreadyTargetFormat(path: String, target: com.shortsfactory.domain.model.ResolutionPreset, fps: Int): Boolean
+    suspend fun isAlreadyTargetFormat(path: String, target: com.shortsfactory.domain.model.ResolutionPreset, fps: Int): Boolean
 }

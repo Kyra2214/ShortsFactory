@@ -13,7 +13,7 @@ class AnalysisPipelineFactory @Inject constructor(
     private val videoEngine: VideoEngine,
     private val transcriptionService: TranscriptionService
 ) {
-    fun create(): MediaAnalysisPipeline = MediaAnalysisPipeline(
+    fun create(audioWorkDir: java.io.File): MediaAnalysisPipeline = MediaAnalysisPipeline(
         aiProvider = aiProvider,
         candidateSelector = CandidateSelector(),
         audioExtractor = object : AudioExtractorService {
@@ -22,6 +22,7 @@ class AnalysisPipelineFactory @Inject constructor(
             }
         },
         transcription = transcriptionService,
-        videoEngine = videoEngine
+        videoEngine = videoEngine,
+        audioWorkDir = audioWorkDir
     )
 }

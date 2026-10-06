@@ -1,5 +1,6 @@
 package com.shortsfactory.domain.trends
 
+import com.shortsfactory.domain.model.ProviderCapability
 import com.shortsfactory.domain.model.TrendCard
 import com.shortsfactory.domain.model.TrendRegion
 
@@ -8,8 +9,8 @@ interface TrendProvider {
     val platformKey: String
     val platformLabel: String
 
-    /** Indica se a integração está disponível via API oficial. */
-    fun isAvailable(): Boolean
+    /** Capacidade real do provedor: API oficial, inferência de IA ou apenas link. */
+    val capability: ProviderCapability
 
     /** URL oficial da plataforma para abrir externamente. */
     fun officialUrl(region: TrendRegion, niche: String): String

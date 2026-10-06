@@ -6,31 +6,26 @@ import androidx.work.CoroutineWorker
 import androidx.work.Data
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
-import com.shortsfactory.data.repository.AIAnalysisRepository
 import com.shortsfactory.data.repository.ProjectRepository
-import com.shortsfactory.data.repository.ShortRepository
-import com.shortsfactory.data.repository.TranscriptRepository
+import com.shortsfactory.data.repository.ProjectStore
+import com.shortsfactory.domain.ai.isTransientFailure
 import com.shortsfactory.domain.pipeline.AnalysisOutcome
 import com.shortsfactory.domain.pipeline.MediaAnalysisPipeline
-import com.shortsfactory.domain.pipeline.MediaMetadata
-import com.shortsfactory.domain.pipeline.MediaValidator
 import com.shortsfactory.domain.pipeline.PipelineStage
 import com.shortsfactory.domain.pipeline.StageProgress
 import com.shortsfactory.domain.pipeline.StageState
-import com.shortsfactory.domain.pipeline.VideoEngine
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 
 @HiltWorker
 class AnalysisWorker @AssistedInject constructor(
     @Assisted appContext: Context,
     @Assisted workerParams: WorkerParameters,
     private val projectRepository: ProjectRepository,
-    private val shortRepository: ShortRepository,
-    private val transcriptRepository: TranscriptRepository,
-    private val aiAnalysisRepository: AIAnalysisRepository,
-    private val videoEngine: VideoEngine,
+    private val projectStore: ProjectStore,
     private val pipelineFactory: AnalysisPipelineFactory
 ) : CoroutineWorker(appContext, workerParams) {
 
@@ -42,27 +37,11 @@ class AnalysisWorker @AssistedInject constructor(
         val project = projectRepository.getById(projectId)
             ?: return Result.failure(workDataOf(WorkKeys.ERROR to "Projeto não encontrado."))
 
-        val info = runCatching { videoEngine.probe(project.videoUri) }.getOrElse { error ->
-            projectRepository.updateAnalysisState(projectId, "failed", 0f, error.message)
-            return Result.failure(workDataOf(WorkKeys.ERROR to (error.message ?: "Falha ao ler a mídia.")))
-        }
-        val validation = MediaValidator.validate(
-            MediaMetadata(
-                path = project.videoUri,
-                sizeBytes = project.videoSizeBytes,
-                durationMs = info.durationMs,
-                width = info.width,
-                height = info.height,
-                hasAudio = info.hasAudio
-            )
-        )
-        if (!validation.valid) {
-            projectRepository.updateAnalysisState(projectId, "failed", 0f, validation.message)
-            return Result.failure(workDataOf(WorkKeys.ERROR to validation.message))
-        }
-
         projectRepository.updateAnalysisState(projectId, "running", 0f)
-        val pipeline: MediaAnalysisPipeline = pipelineFactory.create()
+        // Áudio e fragmentos temporários ficam em cacheDir/analysis/<projectId>/ e o pipeline apaga tudo no final.
+        val pipeline: MediaAnalysisPipeline = pipelineFactory.create(
+            java.io.File(applicationContext.cacheDir, "analysis/$projectId")
+        )
         return try {
             val outcome = pipeline.analyze(
                 videoPath = project.videoUri,
@@ -71,18 +50,25 @@ class AnalysisWorker @AssistedInject constructor(
             )
             when (outcome) {
                 is AnalysisOutcome.Success -> {
-                    transcriptRepository.save(projectId, outcome.transcript)
-                    aiAnalysisRepository.save(projectId, "configured", outcome.result)
-                    shortRepository.insertCandidates(projectId, outcome.selected)
-                    projectRepository.updateAnalysisState(projectId, "done", 1f)
+                    // Provedor/modelo que de fato responderam (não o "configurado").
+                    val responder = listOfNotNull(outcome.result.provider, outcome.result.model).joinToString(" · ")
+                    // Transcript + análise + candidatos + estado "done" numa única transação: ou grava tudo ou nada.
+                    // Re-análise substitui os candidatos antigos em vez de duplicá-los.
+                    projectStore.saveAnalysis(
+                        projectId = projectId,
+                        transcript = outcome.transcript,
+                        provider = responder.ifBlank { "desconhecido" },
+                        result = outcome.result,
+                        selected = outcome.selected
+                    )
                     Result.success(workDataOf(WorkKeys.PROJECT_ID to projectId, WorkKeys.PROGRESS to 1f))
                 }
                 is AnalysisOutcome.Cancelled -> {
-                    projectRepository.updateAnalysisState(projectId, "cancelled", currentProgress())
+                    // O estado é gravado uma única vez, no catch abaixo (em NonCancellable).
                     throw CancellationException("Análise cancelada.")
                 }
                 is AnalysisOutcome.Failed -> {
-                    val canRetry = runAttemptCount < MAX_RETRIES && isTransient(outcome.message)
+                    val canRetry = runAttemptCount < MAX_RETRIES && outcome.retryable
                     if (canRetry) {
                         projectRepository.updateAnalysisState(projectId, "queued", currentProgress(), outcome.message)
                         Result.retry()
@@ -93,12 +79,12 @@ class AnalysisWorker @AssistedInject constructor(
                 }
             }
         } catch (ce: CancellationException) {
-            videoEngine.cancel()
-            projectRepository.updateAnalysisState(projectId, "cancelled", currentProgress(), "Análise cancelada.")
+            // O processo ffmpeg morre com o coroutine (sem cancel() global). Gravar estado: NonCancellable.
+            recordStop(projectId)
             throw ce
         } catch (error: Exception) {
             val message = error.message ?: "Falha inesperada na análise."
-            if (runAttemptCount < MAX_RETRIES && isTransient(message)) {
+            if (runAttemptCount < MAX_RETRIES && error.isTransientFailure()) {
                 projectRepository.updateAnalysisState(projectId, "queued", currentProgress(), message)
                 Result.retry()
             } else {
@@ -140,10 +126,18 @@ class AnalysisWorker @AssistedInject constructor(
 
     private fun currentProgress(): Float = lastProgress
 
-    private fun isTransient(message: String): Boolean {
-        val normalized = message.lowercase()
-        return listOf("timeout", "indisponível", "http 408", "http 429", "http 500", "http 502", "http 503", "http 504")
-            .any(normalized::contains)
+    /**
+     * Grava o estado de uma parada. Cancelamento do usuário → "cancelled". Parada do sistema (restrições,
+     * preempção) → "queued": o WorkManager reagenda, então marcar "cancelled" mentiria para a UI.
+     */
+    private suspend fun recordStop(projectId: Long) = withContext(NonCancellable) {
+        if (cancelledByApp()) {
+            projectRepository.updateAnalysisState(projectId, "cancelled", currentProgress(), "Análise cancelada.")
+        } else {
+            projectRepository.updateAnalysisState(
+                projectId, "queued", currentProgress(), "Interrompida pelo sistema; será retomada."
+            )
+        }
     }
 
     companion object {

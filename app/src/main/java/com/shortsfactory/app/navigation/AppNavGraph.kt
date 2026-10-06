@@ -124,6 +124,10 @@ fun AppNavGraph(navController: NavHostController = rememberNavController()) {
             val startMs by viewModel.startMs.collectAsState()
             val endMs by viewModel.endMs.collectAsState()
             val videoDurationMs by viewModel.videoDurationMs.collectAsState()
+            val editorError by viewModel.error.collectAsState()
+            val saved by viewModel.saved.collectAsState()
+            // Só volta depois de gravar com sucesso; intervalo inválido fica na tela com a mensagem.
+            LaunchedEffect(saved) { if (saved) navController.popBackStack() }
             ShortEditorScreen(
                 shortId = shortId,
                 title = title,
@@ -134,9 +138,9 @@ fun AppNavGraph(navController: NavHostController = rememberNavController()) {
                 startMs = startMs,
                 endMs = endMs,
                 videoDurationMs = videoDurationMs,
-                onSave = { title, description, hashtags, cta, start, end ->
-                    viewModel.saveMetadata(title, description, hashtags, cta, start, end)
-                    navController.popBackStack()
+                error = editorError,
+                onSave = { title, hook, description, hashtags, cta, start, end ->
+                    viewModel.saveMetadata(title, hook, description, hashtags, cta, start, end)
                 },
                 onPreview = { _, _ -> /* preview acionado via intent player */ },
                 onBack = { navController.popBackStack() }
