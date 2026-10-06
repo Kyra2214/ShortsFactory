@@ -63,6 +63,51 @@ class SecureKeyStore(context: Context) {
             .apply()
     }
 
+    /** IDs de provedores gratuitos (catálogo) com ao menos uma chave salva. */
+    fun configuredProviderIds(): Set<String> =
+        prefs.all.keys
+            .filter { it.startsWith(KEY_PROVIDER_PREFIX) }
+            .map { it.removePrefix(KEY_PROVIDER_PREFIX) }
+            .filter { getProviderKeys(it).isNotEmpty() }
+            .toSet()
+
+    /** Chaves do provedor gratuito [providerId], na ordem de tentativa. ID inválido retorna vazio. */
+    fun getProviderKeys(providerId: String): List<String> {
+        val id = normalizeProviderId(providerId) ?: return emptyList()
+        val encoded = prefs.getString(KEY_PROVIDER_PREFIX + id, null)
+        if (encoded.isNullOrBlank()) return emptyList()
+        return runCatching {
+            val array = JSONArray(encoded)
+            buildList {
+                for (index in 0 until array.length()) {
+                    array.optString(index).trim().takeIf { it.isNotEmpty() }?.let(::add)
+                }
+            }
+        }.getOrDefault(emptyList())
+    }
+
+    fun hasProviderKey(providerId: String): Boolean = getProviderKeys(providerId).isNotEmpty()
+
+    /** Salva as chaves do provedor sem duplicação; lista vazia remove a entrada (provedor desligado). */
+    fun saveProviderKeys(providerId: String, keys: List<String>) {
+        val id = normalizeProviderId(providerId) ?: return
+        val normalized = keys.map(String::trim).filter(String::isNotEmpty).distinct()
+        if (normalized.isEmpty()) {
+            clearProviderKeys(id)
+            return
+        }
+        val array = JSONArray().apply { normalized.forEach(::put) }
+        prefs.edit().putString(KEY_PROVIDER_PREFIX + id, array.toString()).apply()
+    }
+
+    fun clearProviderKeys(providerId: String) {
+        val id = normalizeProviderId(providerId) ?: return
+        prefs.edit().remove(KEY_PROVIDER_PREFIX + id).apply()
+    }
+
+    private fun normalizeProviderId(providerId: String): String? =
+        providerId.trim().lowercase().takeIf { PROVIDER_ID_REGEX.matches(it) }
+
     fun getTranscriptionApiKey(): String? = prefs.getString(KEY_TRANSCRIPTION_API, null)
 
     fun saveTranscriptionApiKey(key: String) {
@@ -88,6 +133,8 @@ class SecureKeyStore(context: Context) {
     companion object {
         private const val KEY_API = "grok_api_key"
         private const val KEY_API_KEYS = "xai_api_keys"
+        private const val KEY_PROVIDER_PREFIX = "free_api_keys_"
+        private val PROVIDER_ID_REGEX = Regex("[a-z0-9][a-z0-9_-]{0,39}")
         private const val KEY_TRANSCRIPTION_API = "openai_transcription_api_key"
         private const val KEY_RESOLUTION = "resolution"
         private const val KEY_QUALITY = "quality"

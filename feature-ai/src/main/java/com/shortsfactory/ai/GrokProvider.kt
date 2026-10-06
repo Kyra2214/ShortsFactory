@@ -27,9 +27,26 @@ internal data class ChatProviderConfig(
     val chatEndpoint: String,
     val modelsEndpoint: String?,
     val defaultModels: List<String>,
-    val modelFilter: (String) -> Boolean
+    val modelFilter: (String) -> Boolean,
+    /** Quando presente, transforma a resposta bruta da listagem na lista final de modelos. */
+    val modelResolver: ((String) -> List<String>)? = null
 ) {
     companion object {
+        fun free(entry: com.shortsfactory.domain.ai.catalog.ApiProviderEntry) = ChatProviderConfig(
+            displayName = entry.name,
+            chatEndpoint = entry.chatCompletionsUrl,
+            modelsEndpoint = entry.modelsEndpoint,
+            // Os IDs do catálogo são só ponto de partida; marcadores de posição nunca são enviados.
+            defaultModels = entry.models.map { it.id }
+                .filter { !it.contains("bootstrap") && it != "openrouter-free" },
+            modelFilter = { true },
+            modelResolver = { raw ->
+                com.shortsfactory.domain.ai.catalog.FreeModelDiscovery.select(
+                    com.shortsfactory.domain.ai.catalog.FreeModelDiscovery.parse(raw)
+                )
+            }
+        )
+
         fun xAi() = ChatProviderConfig(
             displayName = "IA xAI/Grok",
             chatEndpoint = "https://api.x.ai/v1/chat/completions",
@@ -131,6 +148,9 @@ internal open class GrokProvider(
         return withFallback(prompt, ::extractMessageContent)
     }
 
+    override suspend fun generateText(prompt: String): String =
+        withFallback(prompt, ::extractMessageContent)
+
     /**
      * Executa a mesma operação em cada combinação chave/modelo até obter uma resposta válida.
      * Erros 401/403/404/429/5xx e falhas de parsing não interrompem o fallback.
@@ -185,6 +205,7 @@ internal open class GrokProvider(
         apiKey = apiKey
     ) { connection ->
         val response = readResponse(connection)
+        config.modelResolver?.let { return@withHttpConnection it(response) }
         val root = Json.parseToJsonElement(response).jsonObject
         root["data"]?.jsonArray?.mapNotNull { element ->
             element.jsonObject["id"]?.jsonPrimitive?.content

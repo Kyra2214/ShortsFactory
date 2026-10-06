@@ -45,6 +45,7 @@ import com.shortsfactory.domain.model.SubtitleStyle
 fun SettingsScreen(
     onUpdate: (resolution: String, quality: String, fps: Int, subtitleStyle: String, duration: String) -> Unit,
     onOpenGrokSettings: () -> Unit,
+    onOpenFreeApis: () -> Unit,
     onBack: () -> Unit
 ) {
     val context: Context = LocalContext.current
@@ -181,6 +182,31 @@ fun SettingsScreen(
                         Text("IA e chaves", style = MaterialTheme.typography.titleSmall)
                         Text(
                             "Chaves xAI e OpenAI usadas na análise e na transcrição",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Icon(
+                        Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            Surface(
+                modifier = Modifier.fillMaxWidth().clickable(onClick = onOpenFreeApis),
+                shape = MaterialTheme.shapes.medium,
+                color = MaterialTheme.colorScheme.surfaceContainer
+            ) {
+                Row(
+                    modifier = Modifier.padding(start = 16.dp, top = 14.dp, bottom = 14.dp, end = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("APIs gratuitas", style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            "Provedores com plano gratuito: cadastro, chaves e teste",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

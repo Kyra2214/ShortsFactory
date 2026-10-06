@@ -9,6 +9,7 @@ import com.shortsfactory.data.local.dao.ExportBatchDao
 import com.shortsfactory.data.local.dao.ExportDao
 import com.shortsfactory.data.local.dao.ProjectDao
 import com.shortsfactory.data.local.dao.ShortDao
+import com.shortsfactory.data.local.dao.ShortPlatformMetadataDao
 import com.shortsfactory.data.local.dao.SubtitleDao
 import com.shortsfactory.data.local.dao.TranscriptDao
 import com.shortsfactory.data.local.entity.AIAnalysisEntity
@@ -16,6 +17,7 @@ import com.shortsfactory.data.local.entity.ExportBatchEntity
 import com.shortsfactory.data.local.entity.ExportEntity
 import com.shortsfactory.data.local.entity.ProjectEntity
 import com.shortsfactory.data.local.entity.ShortEntity
+import com.shortsfactory.data.local.entity.ShortPlatformMetadataEntity
 import com.shortsfactory.data.local.entity.SubtitleEntity
 import com.shortsfactory.data.local.entity.TranscriptEntity
 
@@ -27,9 +29,10 @@ import com.shortsfactory.data.local.entity.TranscriptEntity
         AIAnalysisEntity::class,
         SubtitleEntity::class,
         ExportEntity::class,
-        ExportBatchEntity::class
+        ExportBatchEntity::class,
+        ShortPlatformMetadataEntity::class
     ],
-    version = 5,
+    version = 6,
     exportSchema = true
 )
 abstract class ShortsDatabase : RoomDatabase() {
@@ -40,6 +43,7 @@ abstract class ShortsDatabase : RoomDatabase() {
     abstract fun subtitleDao(): SubtitleDao
     abstract fun exportDao(): ExportDao
     abstract fun exportBatchDao(): ExportBatchDao
+    abstract fun shortPlatformMetadataDao(): ShortPlatformMetadataDao
 
     companion object {
         val MIGRATION_1_2: Migration = object : Migration(1, 2) {
@@ -94,6 +98,18 @@ abstract class ShortsDatabase : RoomDatabase() {
                 MIGRATION_4_5_SQL.forEach { database.execSQL(it) }
             }
         }
+
+        /** 5 → 6: tabela `short_platform_metadata` (aditiva; nenhuma tabela existente é alterada). */
+        val MIGRATION_5_6: Migration = object : Migration(5, 6) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                MIGRATION_5_6_SQL.forEach { database.execSQL(it) }
+            }
+        }
+
+        internal val MIGRATION_5_6_SQL: List<String> = listOf(
+            "CREATE TABLE IF NOT EXISTS short_platform_metadata (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, shortId INTEGER NOT NULL, platform TEXT NOT NULL, title TEXT NOT NULL, description TEXT NOT NULL, hashtagsJson TEXT NOT NULL, updatedAtMs INTEGER NOT NULL, FOREIGN KEY(shortId) REFERENCES shorts(id) ON UPDATE NO ACTION ON DELETE CASCADE)",
+            "CREATE UNIQUE INDEX IF NOT EXISTS index_short_platform_metadata_shortId_platform ON short_platform_metadata (shortId, platform)"
+        )
 
         internal val MIGRATION_4_5_SQL: List<String> = listOf(
             "CREATE TABLE IF NOT EXISTS export_batches (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, projectId INTEGER NOT NULL, total INTEGER NOT NULL, completed INTEGER NOT NULL, failed INTEGER NOT NULL, cancelled INTEGER NOT NULL, state TEXT NOT NULL, createdAtMs INTEGER NOT NULL, updatedAtMs INTEGER NOT NULL, FOREIGN KEY(projectId) REFERENCES projects(id) ON UPDATE NO ACTION ON DELETE CASCADE)",

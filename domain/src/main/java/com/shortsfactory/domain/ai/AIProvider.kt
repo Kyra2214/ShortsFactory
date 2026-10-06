@@ -25,4 +25,8 @@ interface AIProvider {
 
     /** Cria um briefing de conteúdo original inspirado em uma tendência (item 8 do Radar). */
     suspend fun briefFromTrend(trendTitle: String, platform: String, region: String): String
+
+    /** Geração de texto livre (ex.: metadados por plataforma). Provedores sem suporte lançam [AiException]. */
+    suspend fun generateText(prompt: String): String =
+        throw AiException("$providerName não oferece geração de texto livre.")
 }

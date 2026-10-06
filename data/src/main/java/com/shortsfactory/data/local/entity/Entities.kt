@@ -139,3 +139,20 @@ data class ExportBatchEntity(
     val createdAtMs: Long = System.currentTimeMillis(),
     val updatedAtMs: Long = System.currentTimeMillis()
 )
+
+
+/** Textos de publicação por corte e plataforma (Room v6, aditivo). `hashtags` é um JSON de lista de strings. */
+@Entity(
+    tableName = "short_platform_metadata",
+    foreignKeys = [ForeignKey(entity = ShortEntity::class, parentColumns = ["id"], childColumns = ["shortId"], onDelete = ForeignKey.CASCADE)],
+    indices = [Index(value = ["shortId", "platform"], unique = true)]
+)
+data class ShortPlatformMetadataEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val shortId: Long,
+    val platform: String,
+    val title: String,
+    val description: String,
+    val hashtagsJson: String,
+    val updatedAtMs: Long = System.currentTimeMillis()
+)

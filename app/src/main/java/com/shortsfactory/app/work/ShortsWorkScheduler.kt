@@ -52,7 +52,8 @@ class ShortsWorkScheduler @Inject constructor(
         quality: String,
         resolution: String,
         fps: Int,
-        subtitleStyle: String
+        subtitleStyle: String,
+        perPlatformProfiles: Boolean = false
     ): Operation {
         val request = OneTimeWorkRequestBuilder<ExportWorker>()
             .setInputData(
@@ -62,7 +63,8 @@ class ShortsWorkScheduler @Inject constructor(
                     WorkKeys.QUALITY to quality,
                     WorkKeys.RESOLUTION to resolution,
                     WorkKeys.FPS to fps,
-                    WorkKeys.SUBTITLE_STYLE to subtitleStyle
+                    WorkKeys.SUBTITLE_STYLE to subtitleStyle,
+                    WorkKeys.PER_PLATFORM to perPlatformProfiles
                 )
             )
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 20, TimeUnit.SECONDS)
@@ -106,6 +108,7 @@ object WorkKeys {
     const val RESOLUTION = "resolution"
     const val FPS = "fps"
     const val SUBTITLE_STYLE = "subtitle_style"
+    const val PER_PLATFORM = "per_platform_profiles"
     const val STAGE = "stage"
     const val PROGRESS = "progress"
     const val MESSAGE = "message"

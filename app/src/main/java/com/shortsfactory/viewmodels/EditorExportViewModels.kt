@@ -162,8 +162,23 @@ class ExportViewModel @Inject constructor(
     private val workScheduler: ShortsWorkScheduler,
     private val keyStore: SecureKeyStore,
     private val exportRepository: ExportRepository,
-    private val exportBatchRepository: ExportBatchRepository
+    private val exportBatchRepository: ExportBatchRepository,
+    private val aiProvider: com.shortsfactory.domain.ai.AIProvider,
+    private val metadataRepository: com.shortsfactory.data.repository.PlatformMetadataRepository
 ) : ViewModel() {
+
+    private val _metadata = MutableStateFlow<List<com.shortsfactory.export.ShortMetadataUi>>(emptyList())
+    private val _metadataBusy = MutableStateFlow(false)
+    private var metadataJob: Job? = null
+    private val _suggestions = MutableStateFlow<List<com.shortsfactory.export.ShortSuggestionUi>>(emptyList())
+    private val _suggestionsBusy = MutableStateFlow(false)
+    private var suggestionsJob: Job? = null
+
+    val suggestions: StateFlow<List<com.shortsfactory.export.ShortSuggestionUi>> = _suggestions.asStateFlow()
+    val suggestionsBusy: StateFlow<Boolean> = _suggestionsBusy.asStateFlow()
+
+    val metadata: StateFlow<List<com.shortsfactory.export.ShortMetadataUi>> = _metadata.asStateFlow()
+    val metadataBusy: StateFlow<Boolean> = _metadataBusy.asStateFlow()
 
     private val _shortsCount = MutableStateFlow(0)
     private val _progress = MutableStateFlow<BatchExportProgress?>(null)
@@ -178,7 +193,12 @@ class ExportViewModel @Inject constructor(
     fun load(id: Long) {
         projectId = id
         viewModelScope.launch {
-            _shortsCount.value = shortRepository.getByProject(id).size
+            val shorts = shortRepository.getByProject(id)
+            _shortsCount.value = shorts.size
+            _metadata.value = shorts.mapNotNull { s ->
+                metadataRepository.get(s.id).takeIf { it.isNotEmpty() }
+                    ?.let { com.shortsfactory.export.ShortMetadataUi(s.id, s.title, it, fromAi = true) }
+            }
             restoreExportProgress(id)
             exportObservationJob?.cancel()
             exportObservationJob = launch {
@@ -215,17 +235,99 @@ class ExportViewModel @Inject constructor(
         if (!open) return
         val hasActiveWork = workScheduler.observeExport(id).first().any { !it.state.isFinished }
         if (hasActiveWork) return
-        val pending = exportRepository.getResumableByProject(id).firstOrNull() ?: return
+        val resumable = exportRepository.getResumableByProject(id)
+        val pending = resumable.firstOrNull() ?: return
+        val perPlatform = pending.quality == PROFILE_QUALITY
+        // Modo automático: um export por grupo de arquivo; retoma com as plataformas de todos os pendentes.
+        val platforms = if (perPlatform) {
+            resumable.flatMap { it.platform.split(',') }.filter { it.isNotBlank() }.distinct()
+        } else {
+            pending.platform.split(',').filter { it.isNotBlank() }
+        }
         workScheduler.enqueueExport(
-            id, pending.platform.split(',').filter { it.isNotBlank() },
-            pending.quality, pending.resolution, pending.fps, keyStore.subtitleStyle()
+            id, platforms, pending.quality, pending.resolution, pending.fps, keyStore.subtitleStyle(), perPlatform
         )
     }
 
-    fun startExport(platforms: List<String>, quality: String, resolution: String, fps: Int) {
+    fun startExport(platforms: List<String>, quality: String, resolution: String, fps: Int, automatic: Boolean = false) {
         if (_progress.value?.isRunning == true) return
         _error.value = null
-        workScheduler.enqueueExport(projectId, platforms, quality, resolution, fps, keyStore.subtitleStyle())
+        workScheduler.enqueueExport(projectId, platforms, quality, resolution, fps, keyStore.subtitleStyle(), automatic)
+    }
+
+    /** A IA escolhe plataformas por Short com justificativa; sem IA/falha não há sugestão (nada é inventado). */
+    fun suggestPlatforms() {
+        if (_suggestionsBusy.value) return
+        suggestionsJob = viewModelScope.launch {
+            _suggestionsBusy.value = true
+            try {
+                val selector = com.shortsfactory.domain.export.PlatformSelector(aiProvider)
+                val candidates = com.shortsfactory.domain.export.PlatformProfiles.all()
+                val result = mutableListOf<com.shortsfactory.export.ShortSuggestionUi>()
+                var failed = 0
+                for (s in shortRepository.getByProject(projectId)) {
+                    try {
+                        val items = selector.suggest(
+                            com.shortsfactory.domain.export.PlatformSuggestionRequest(
+                                s.title, s.hook, s.topic, s.description, (s.endMs - s.startMs) / 1000.0, candidates
+                            )
+                        )
+                        result += com.shortsfactory.export.ShortSuggestionUi(s.id, s.title, items)
+                    } catch (ce: kotlinx.coroutines.CancellationException) {
+                        throw ce
+                    } catch (e: Exception) {
+                        failed++
+                    }
+                }
+                _suggestions.value = result
+                if (failed > 0) {
+                    _error.value = "$failed Short(s) sem sugestão da IA (sem chave ou falha): escolha as plataformas manualmente."
+                }
+            } finally {
+                _suggestionsBusy.value = false
+            }
+        }
+    }
+
+    /** Gera título/descrição/hashtags por plataforma para cada Short; sem IA usa só título e gancho (não persiste). */
+    fun generateMetadata(platformKeys: List<String>) {
+        if (_metadataBusy.value) return
+        val profiles = platformKeys.mapNotNull { com.shortsfactory.domain.export.PlatformProfiles.forKey(it) }
+        if (profiles.isEmpty()) {
+            _error.value = "Selecione ao menos uma plataforma."
+            return
+        }
+        metadataJob = viewModelScope.launch {
+            _metadataBusy.value = true
+            try {
+                val generator = com.shortsfactory.domain.export.PlatformMetadataGenerator(aiProvider)
+                val result = mutableListOf<com.shortsfactory.export.ShortMetadataUi>()
+                var withoutAi = 0
+                for (s in shortRepository.getByProject(projectId)) {
+                    try {
+                        val items = generator.generate(
+                            com.shortsfactory.domain.export.PlatformMetadataRequest(s.title, s.hook, s.topic, s.description, profiles)
+                        )
+                        metadataRepository.save(s.id, items)
+                        result += com.shortsfactory.export.ShortMetadataUi(s.id, s.title, items, fromAi = true)
+                    } catch (ce: kotlinx.coroutines.CancellationException) {
+                        throw ce
+                    } catch (e: Exception) {
+                        withoutAi++
+                        val items = profiles.mapNotNull {
+                            com.shortsfactory.domain.export.PlatformMetadataValidator.fallback(it, s.title, s.hook)
+                        }
+                        result += com.shortsfactory.export.ShortMetadataUi(s.id, s.title, items, fromAi = false)
+                    }
+                }
+                _metadata.value = result
+                if (withoutAi > 0) {
+                    _error.value = "$withoutAi Short(s) sem texto da IA (sem chave ou falha): exibindo só título e gancho."
+                }
+            } finally {
+                _metadataBusy.value = false
+            }
+        }
     }
 
     fun cancel() {
@@ -235,6 +337,8 @@ class ExportViewModel @Inject constructor(
 
     override fun onCleared() {
         exportObservationJob?.cancel()
+        metadataJob?.cancel()
+        suggestionsJob?.cancel()
         super.onCleared()
     }
 
@@ -248,5 +352,9 @@ class ExportViewModel @Inject constructor(
             currentProgress = currentProgress.coerceIn(0f, 1f),
             isRunning = info.state == WorkInfo.State.RUNNING || info.state == WorkInfo.State.ENQUEUED
         )
+    }
+
+    private companion object {
+        const val PROFILE_QUALITY = "Perfil"
     }
 }

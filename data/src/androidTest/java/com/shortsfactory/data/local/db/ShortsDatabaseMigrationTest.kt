@@ -136,11 +136,11 @@ class ShortsDatabaseMigrationTest {
         }
 
         val migrated = Room.databaseBuilder(context, ShortsDatabase::class.java, DATABASE_NAME)
-            .addMigrations(ShortsDatabase.MIGRATION_1_2, ShortsDatabase.MIGRATION_2_3, ShortsDatabase.MIGRATION_3_4, ShortsDatabase.MIGRATION_4_5)
+            .addMigrations(ShortsDatabase.MIGRATION_1_2, ShortsDatabase.MIGRATION_2_3, ShortsDatabase.MIGRATION_3_4, ShortsDatabase.MIGRATION_4_5, ShortsDatabase.MIGRATION_5_6)
             .build()
         try {
             val sqlite = migrated.openHelper.writableDatabase
-            assertEquals(5, sqlite.version)
+            assertEquals(6, sqlite.version)
 
             sqlite.query(
                 "SELECT analysisStatus, analysisProgress, analysisError, updatedAtMs FROM projects WHERE id = 1"
@@ -215,7 +215,7 @@ class ShortsDatabaseMigrationTest {
         }
 
         val db = Room.databaseBuilder(context, ShortsDatabase::class.java, DATABASE_NAME)
-            .addMigrations(ShortsDatabase.MIGRATION_3_4, ShortsDatabase.MIGRATION_4_5)
+            .addMigrations(ShortsDatabase.MIGRATION_3_4, ShortsDatabase.MIGRATION_4_5, ShortsDatabase.MIGRATION_5_6)
             .build()
         try {
             val sqlite = db.openHelper.writableDatabase

@@ -26,6 +26,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.shortsfactory.ai.FreeApiSettingsScreen
 import com.shortsfactory.ai.GrokSettingsScreen
 import com.shortsfactory.editor.ShortEditorScreen
 import com.shortsfactory.export.ExportScreen
@@ -47,6 +48,7 @@ object Routes {
     const val HUNTER = "hunter"
     const val SETTINGS = "settings"
     const val GROK_SETTINGS = "grok_settings"
+    const val FREE_API_SETTINGS = "free_api_settings"
     const val PROJECT = "project/{projectId}"
     const val EDITOR = "editor/{shortId}"
     const val EXPORT = "export/{projectId}"
@@ -210,13 +212,23 @@ fun AppNavGraph(navController: NavHostController = rememberNavController()) {
             val shortsCount by viewModel.shortsCount.collectAsState()
             val exportProgress by viewModel.progress.collectAsState()
             val exportError by viewModel.error.collectAsState()
+            val exportMetadata by viewModel.metadata.collectAsState()
+            val metadataBusy by viewModel.metadataBusy.collectAsState()
+            val platformSuggestions by viewModel.suggestions.collectAsState()
+            val suggestionsBusy by viewModel.suggestionsBusy.collectAsState()
             ExportScreen(
                 projectId = projectId,
                 shortsCount = shortsCount,
                 progress = exportProgress,
                 error = exportError,
-                onExport = { platforms, quality, resolution, fps ->
-                    viewModel.startExport(platforms, quality, resolution, fps)
+                metadata = exportMetadata,
+                metadataBusy = metadataBusy,
+                onGenerateMetadata = { platforms -> viewModel.generateMetadata(platforms) },
+                suggestions = platformSuggestions,
+                suggestionsBusy = suggestionsBusy,
+                onSuggestPlatforms = { viewModel.suggestPlatforms() },
+                onExport = { platforms, quality, resolution, fps, automatic ->
+                    viewModel.startExport(platforms, quality, resolution, fps, automatic)
                 },
                 onCancel = { viewModel.cancel() },
                 onBack = { navController.popBackStack() }
@@ -245,12 +257,17 @@ fun AppNavGraph(navController: NavHostController = rememberNavController()) {
             SettingsScreen(
                 onUpdate = { _, _, _, _, _ -> /* preferences persistidas automaticamente */ },
                 onOpenGrokSettings = { navController.navigate(Routes.GROK_SETTINGS) },
+                onOpenFreeApis = { navController.navigate(Routes.FREE_API_SETTINGS) },
                 onBack = { navController.popBackStack() }
             )
         }
 
         composable(Routes.GROK_SETTINGS) {
             GrokSettingsScreen(onBack = { navController.popBackStack() })
+        }
+
+        composable(Routes.FREE_API_SETTINGS) {
+            FreeApiSettingsScreen(onBack = { navController.popBackStack() })
         }
     }
     }

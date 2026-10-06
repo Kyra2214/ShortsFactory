@@ -97,10 +97,18 @@ Detalhes e submódulos em `docs/fases/FASE-11-REDESIGN-UI.md`. Progresso: 7/7 (1
 ## Fase 12 — Leitor de vídeo interno (extra)
 Detalhes em `docs/fases/FASE-12-LEITOR-DE-VIDEO.md`. Progresso: 5/5 (12.1 a 12.5 implementados; CI aprovada; checklist em aparelho pendente).
 
+## Fase 13 — APIs gratuitas de IA (extra)
+Detalhes em `docs/fases/FASE-13-APIS-GRATUITAS.md`. Progresso: 6/6 (13.1 a 13.6 implementados; CI e checklist em aparelho pendentes).
+
+## Fase 14 — Exportação por plataforma e metadados (extra, depende da Fase 13)
+Detalhes em `docs/fases/FASE-14-EXPORT-POR-PLATAFORMA.md`. Progresso: 7/7 (14.1 a 14.7 implementados; CI e checklist em aparelho pendentes).
+
 ## Progresso (plano corrigido)
 Fases 0–10: implementação integrada em `main`; 139 testes de `:domain` e 5 verificações com FFmpeg real passaram localmente, e o workflow pós-merge está verde. Fases 11–12: implementação integrada na branch de entrega e validada pela CI; a reprodução em aparelho real ainda depende do checklist manual. Não declarar a validação de aparelho concluída sem essa execução.
 
 Fase 11 (redesign de UI): 7/7 submódulos (100%), CI aprovada; validação em aparelho pendente.
+
+Fase 14 (exportação por plataforma e metadados): 7/7 submódulos (100%); 31 testes JVM novos escritos e não executados; CI e validação em aparelho pendentes.
 
 ## Regra de encerramento
 
