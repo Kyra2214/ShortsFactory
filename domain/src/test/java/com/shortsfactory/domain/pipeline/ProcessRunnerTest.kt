@@ -93,7 +93,7 @@ class ProcessRunnerTest {
     fun `tempo limite mata o processo e lanca FfmpegFailedException com timedOut`() = runBlocking {
         val started = CompletableDeferred<Process>()
         try {
-            ProcessRunner.run(sh("echo preparando; exec sleep 30"), timeoutMs = 300, onStart = { started.complete(it) })
+            ProcessRunner.run(sh("echo preparando; exec sleep 30"), timeoutMs = 1_000, onStart = { started.complete(it) })
             fail("deveria ter estourado o tempo")
         } catch (e: FfmpegFailedException) {
             assertTrue(e.timedOut)
