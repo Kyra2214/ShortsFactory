@@ -41,6 +41,7 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
@@ -51,6 +52,7 @@ import java.io.File
  * Leitor interno para arquivos do app (vídeo importado, prévias e Shorts exportados).
  * Controles próprios em Compose; o vídeo é desenhado por [PlayerView] sem controlador.
  */
+@OptIn(UnstableApi::class)
 @Composable
 fun SfVideoPlayer(
     filePath: String,
