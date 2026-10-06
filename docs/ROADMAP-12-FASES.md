@@ -1,6 +1,6 @@
 # Roadmap de implementação — 12 fases
 
-> **Estado atual (integração das Fases 2–10):** PR #3 está verde no commit `394c182`: testes JVM, lint debug/release, builds APK e 9 testes instrumentados Room no emulador API 35 passaram nos runs [automático](https://github.com/Kyra2214/ShortsFactory/actions/runs/37437160979) e [manual](https://github.com/Kyra2214/ShortsFactory/actions/runs/37437183782). O job libera espaço removendo somente NDK pré-instalado não utilizado. A quota de artefatos do GitHub impede o upload de relatórios, sem bloquear CI. A validação FFmpeg arm64 em aparelho real continua pendente.
+> **Estado atual:** PR #3 foi mesclado em `main` no commit `dae752f`; o run pós-merge [37447860122](https://github.com/Kyra2214/ShortsFactory/actions/runs/37447860122) passou em testes JVM, lint, builds e 9 testes instrumentados Room no API 35. A implementação das fases 11–12 do ZIP recebido está agora em uma branch de integração e aguarda o workflow próprio; a entrega do APK será obtida desse build. O checklist funcional em aparelho arm64 real permanece pendente.
 >
 > **Fonte operacional:** `docs/VALIDACAO-INTEGRACAO-FASE-02.md` e os relatórios em `docs/fases/`. `docs/AUDITORIA-E-FASES.md` é uma auditoria estática histórica de um snapshot anterior; não representa sozinha o estado atual.
 
@@ -91,8 +91,16 @@ Este documento é a referência operacional do ciclo. Uma fase só é considerad
 - Binários FFmpeg/ffprobe incluídos no artefato.
 - Documentação alinhada ao comportamento real.
 
+## Fase 11 — Redesign da interface (extra, fora do plano 0–10)
+Detalhes e submódulos em `docs/fases/FASE-11-REDESIGN-UI.md`. Progresso: 7/7 (11.1 a 11.7 implementados; validação pela CI pendente).
+
+## Fase 12 — Leitor de vídeo interno (extra)
+Detalhes em `docs/fases/FASE-12-LEITOR-DE-VIDEO.md`. Progresso: 5/5 (12.1 a 12.5 implementados; validação pela CI e checklist em aparelho pendentes).
+
 ## Progresso (plano corrigido)
-Fases 0–10: implementação integrada; 139 testes de `:domain` e 5 verificações com FFmpeg real passaram localmente. Job principal de CI anterior (testes JVM, lint e APKs) passou; migração instrumentada, lint/build do snapshot atual e execução arm64 aguardam validação. Não declarar o ciclo concluído até o workflow completo ficar verde.
+Fases 0–10: implementação integrada em `main`; 139 testes de `:domain` e 5 verificações com FFmpeg real passaram localmente, e o workflow pós-merge está verde. Fases 11–12: implementação integrada na branch de entrega, aguardando validação completa da CI; a reprodução em aparelho real ainda depende do checklist manual. Não declarar a validação de aparelho concluída sem essa execução.
+
+Fase 11 (redesign de UI): 7/7 submódulos (100%), validação pela CI pendente.
 
 ## Regra de encerramento
 

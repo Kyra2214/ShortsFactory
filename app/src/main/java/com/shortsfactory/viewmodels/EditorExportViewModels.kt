@@ -14,6 +14,8 @@ import com.shortsfactory.data.repository.ShortRepository
 import com.shortsfactory.data.repository.ShortUpdateResult
 import com.shortsfactory.domain.export.ExportBatchState
 import com.shortsfactory.domain.model.BatchExportProgress
+import com.shortsfactory.editor.PreviewUiState
+import com.shortsfactory.export.ClipPreviewManager
 import com.shortsfactory.export.ShortsProcessingManager
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
@@ -29,8 +31,42 @@ import javax.inject.Inject
 class EditorViewModel @Inject constructor(
     private val shortRepository: ShortRepository,
     private val projectRepository: ProjectRepository,
-    private val projectStore: ProjectStore
+    private val projectStore: ProjectStore,
+    private val clipPreviewManager: ClipPreviewManager,
+    private val keyStore: SecureKeyStore
 ) : ViewModel() {
+
+    private val _preview = MutableStateFlow<PreviewUiState>(PreviewUiState.Idle)
+    private var previewJob: Job? = null
+    val previewState: StateFlow<PreviewUiState> = _preview.asStateFlow()
+
+    /** Renderiza (ou reaproveita do cache) a prévia fiel do Short salvo; cancelável. */
+    fun renderPreview() {
+        if (previewJob?.isActive == true) return
+        _preview.value = PreviewUiState.Rendering(0f)
+        previewJob = viewModelScope.launch {
+            try {
+                val path = clipPreviewManager.render(shortId, keyStore.subtitleStyle()) { p ->
+                    _preview.value = PreviewUiState.Rendering(p)
+                }
+                _preview.value = PreviewUiState.Ready(path)
+            } catch (ce: kotlinx.coroutines.CancellationException) {
+                _preview.value = PreviewUiState.Idle
+                throw ce
+            } catch (e: Exception) {
+                _preview.value = PreviewUiState.Failed(e.message ?: "Não foi possível gerar a prévia.")
+            }
+        }
+    }
+
+    fun cancelPreview() { previewJob?.cancel() }
+
+    fun dismissPreview() { _preview.value = PreviewUiState.Idle }
+
+    override fun onCleared() {
+        previewJob?.cancel()
+        super.onCleared()
+    }
 
     private val _error = MutableStateFlow<String?>(null)
     private val _saved = MutableStateFlow(false)
@@ -42,6 +78,7 @@ class EditorViewModel @Inject constructor(
     private val _startMs = MutableStateFlow(0L)
     private val _endMs = MutableStateFlow(0L)
     private val _videoDurationMs = MutableStateFlow(0L)
+    private val _videoPath = MutableStateFlow<String?>(null)
     private var shortId: Long = 0L
     private var projectId: Long = 0L
 
@@ -53,6 +90,8 @@ class EditorViewModel @Inject constructor(
     val startMs: StateFlow<Long> = _startMs.asStateFlow()
     val endMs: StateFlow<Long> = _endMs.asStateFlow()
     val videoDurationMs: StateFlow<Long> = _videoDurationMs.asStateFlow()
+    /** Caminho local do vídeo-fonte para a prévia rápida (`null` até carregar). */
+    val videoPath: StateFlow<String?> = _videoPath.asStateFlow()
     /** Mensagem de validação/erro da última tentativa de salvar (`null` = nenhuma). */
     val error: StateFlow<String?> = _error.asStateFlow()
     /** Fica verdadeiro depois que o Short foi salvo; a tela navega de volta só então. */
@@ -72,8 +111,9 @@ class EditorViewModel @Inject constructor(
             _cta.value = entity.cta
             _startMs.value = entity.startMs
             _endMs.value = entity.endMs
-            _videoDurationMs.value = projectRepository.getById(entity.projectId)?.videoDurationMs
-                ?: entity.endMs
+            val project = projectRepository.getById(entity.projectId)
+            _videoDurationMs.value = project?.videoDurationMs ?: entity.endMs
+            _videoPath.value = project?.videoUri
         }
     }
 

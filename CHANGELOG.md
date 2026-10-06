@@ -1,5 +1,21 @@
 # Changelog
 
+## Fase 12 — Leitor de vídeo interno (5/5, validação pela CI pendente)
+- 12.5 Fechamento: `PreviewClipRange` (domain) usado pela prévia rápida, `PlayablePath.isInside` extraído, 12 testes JVM novos (`PreviewClipRangeTest`, `PlayablePathTest`), `clipEndMs` opcional no `SfVideoPlayer` e checklist em aparelho (`docs/fases/FASE-12-CHECKLIST-APARELHO.md`). Suíte completa não executada neste ambiente (Gradle sem rede); fica para a CI.
+- 12.4 Assistir exportados: `CandidateUi.exportedPath`, botão "Assistir exportado" nos cortes concluídos e diálogo com `SfVideoPlayer` em `ProjectScreen`; `:feature-projects` depende de `:feature-player`. Não compilado/testado.
+- 12.3 Prévia fiel: `assembleClipSpec` compartilhado com a exportação, `ClipPreviewManager` (540x960, cache por fingerprint em `cache/preview`, cancelável), botão "Prévia fiel" e diálogo com progresso/reprodução no Editor. Não compilado/testado.
+- 12.2 Prévia rápida no Editor: trecho em loop em moldura 9:16 (`SfVideoPlayer` com `clipStartMs`/`clipEndMs`/`fillFrame`), atualizada ao soltar o `RangeSlider`; `EditorViewModel.videoPath`; `:feature-editor` depende de `:feature-player`. Não compilado/testado.
+- 12.1 Módulo `:feature-player` com Media3 1.5.1 e `SfVideoPlayer` (controles próprios, ciclo de vida, validação de caminho em `filesDir`/`cacheDir`). Sem integração em telas. Não compilado/testado.
+
+## Fase 11 — Redesign da interface (7/7, validação pela CI pendente)
+- 11.7 Ajustes redesenhados (chips, legenda em linhas selecionáveis, salvar só com alterações, entrada para IA e chaves) e `GrokSettingsScreen` com novo visual sem alterar a lógica; mensagem de chave ausente atualizada. Não compilado/testado.
+- 11.6 Tendências unificadas: Radar e Caçador como modos (Explorar/Caçador) em `ContentRadarScreen`, chips no lugar de botões/dropdown, selo de origem em etiqueta; corrigido o título da análise rápida (região analisada). Não compilado/testado.
+- 11.5 `ExportScreen` redesenhada: opções em chips (FPS agora mostra a seleção), contagem em destaque, progresso/cancelar/iniciar fixos no rodapé. Não compilado/testado.
+- 11.4 `ShortEditorScreen` redesenhada: `RangeSlider` único para o trecho com leitura de início/duração/fim, seção Publicação, ações fixas no rodapé. Prévia 9:16 embutida fora do escopo. Não compilado/testado.
+- 11.3 `ProjectScreen` redesenhada: chips de duração com seleção, cortes ranqueados por score com `SfScoreBadge`, ícones de estágio da pipeline, exportação fixa no rodapé. Não compilado/testado.
+- 11.2 Barra de navegação inferior (Início, Tendências, Ajustes) em `AppNavGraph` e `HomeScreen` redesenhada (painel "Novo Short", tendências por região, lista de projetos); card duplicado do Radar removido. Não compilado/testado.
+- 11.1 Tema próprio em `core/ui` (`ShortsFactoryTheme`, cores claro/escuro, tipografia, formas) e componentes base `SfSectionTitle`/`SfScoreBadge`; `MainActivity` e `themes.xml` (claro/noturno) atualizados. Não compilado/testado.
+
 ## Fase 10 — QA e release (Fase 10 implementada)
 - 10.4 `ShortsProcessingManagerTest` (4 testes JVM com DAOs falsos: falha parcial, reuso, intervalo editado, cancelamento); README/Roadmap alinhados. Estes testes do módulo Android aguardam a CI.
 - 10.3 `proguard-rules.pro` (Room, serialization, WorkManager worker, Tink, atributos de stack trace); CI/README com `lintDebug lintRelease`. R8 não executado.

@@ -77,6 +77,7 @@ dependencies {
     implementation(project(":feature-export"))
     implementation(project(":feature-settings"))
     implementation(project(":feature-trends"))
+    implementation(project(":feature-player"))
 
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.compose.ui:ui:1.7.6")

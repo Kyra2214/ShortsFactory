@@ -141,7 +141,7 @@ internal open class GrokProvider(
     private suspend fun <T> withFallbackTracked(prompt: String, transform: (String) -> T): Pair<T, String> {
         val configuredKeys = apiKeys()
         require(configuredKeys.isNotEmpty()) {
-            "Nenhuma chave configurada para ${config.displayName}. Configure em Configurações → IA e chaves."
+            "Nenhuma chave configurada para ${config.displayName}. Configure em Ajustes, IA e chaves."
         }
 
         var lastError: Throwable? = null

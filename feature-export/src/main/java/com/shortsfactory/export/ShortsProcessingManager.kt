@@ -3,6 +3,8 @@ package com.shortsfactory.export
 import android.content.Context
 import android.util.Log
 import com.shortsfactory.data.local.entity.ExportEntity
+import com.shortsfactory.data.local.entity.ProjectEntity
+import com.shortsfactory.data.local.entity.ShortEntity
 import com.shortsfactory.data.repository.CandidateArtifactsCodec
 import com.shortsfactory.data.repository.ExportBatchRepository
 import com.shortsfactory.data.repository.ExportRepository
@@ -169,21 +171,10 @@ class ShortsProcessingManager @Inject constructor(
                     exportRepository.markQueued(exportId)
                     exportRepository.markRunning(exportId)
                     shortRepository.updateExportProgress(candidate.id, "processing", 0f)
-                    // Legendas persistidas (Fase 6; `[]` válido = sem fala); transcript só se ausentes/corrompidas.
-                    val subtitles = CandidateArtifactsCodec.decodeSubtitles(candidate.subtitlesJson)
-                        ?: transcriptRepository.get(projectId)?.segments
-                            ?.let { SubtitleTiming.fromTranscript(it, candidate.startMs, candidate.endMs) }
-                            .orEmpty()
-                    // Trilha persistida (Fase 6) tem prioridade; recalcula só se ausente/corrompida.
-                    // Falha na trilha de foco não derruba o export (foco central); cancelamento NUNCA é engolido.
-                    val focusTrack = CandidateArtifactsCodec.decodeFocusTrack(candidate.focusTrackJson) ?: try {
-                        videoEngine.detectFocusTrack(project.videoUri, candidate.startMs, candidate.endMs)
-                    } catch (ce: CancellationException) {
-                        throw ce
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Trilha de foco indisponível para ${candidate.title}; usando foco central.", e)
-                        null
-                    }
+                    val clipSpec = assembleClipSpec(
+                        project, candidate, partFile.absolutePath, targetWidth, targetHeight,
+                        safeFps, selectedQuality.videoBitrateBps, style
+                    )
                     coroutineScope {
                         val progressUpdates = Channel<Float>(Channel.CONFLATED)
                         launch {
@@ -198,19 +189,7 @@ class ShortsProcessingManager @Inject constructor(
                         }
                         try {
                             videoEngine.processClip(
-                                ClipSpec(
-                                    inputPath = project.videoUri,
-                                    outputPath = partFile.absolutePath,
-                                    startMs = candidate.startMs,
-                                    endMs = candidate.endMs,
-                                    targetWidth = targetWidth,
-                                    targetHeight = targetHeight,
-                                    fps = safeFps,
-                                    bitrateBps = selectedQuality.videoBitrateBps,
-                                    focusTrack = focusTrack,
-                                    subtitles = subtitles,
-                                    subtitleStyle = style
-                                )
+                                clipSpec
                             ) { progress ->
                                 val clamped = progress.coerceIn(0f, 1f)
                                 progressUpdates.trySend(clamped)
@@ -293,6 +272,50 @@ class ShortsProcessingManager @Inject constructor(
         )
         return ExportBatchResult(total, doneCount, failedCount)
     }
+
+    /**
+     * Montagem única do [ClipSpec] de um Short (export e prévia fiel): legendas persistidas (Fase 6; `[]`
+     * válido = sem fala; transcript só se ausentes/corrompidas) e trilha de foco persistida (recalcula só se
+     * ausente/corrompida). Falha na trilha não derruba o clipe (foco central); cancelamento NUNCA é engolido.
+     */
+    suspend fun assembleClipSpec(
+        project: ProjectEntity,
+        candidate: ShortEntity,
+        outputPath: String,
+        targetWidth: Int,
+        targetHeight: Int,
+        fps: Int,
+        bitrateBps: Long,
+        style: com.shortsfactory.domain.model.SubtitleStyleConfig
+    ): ClipSpec {
+        val subtitles = CandidateArtifactsCodec.decodeSubtitles(candidate.subtitlesJson)
+            ?: transcriptRepository.get(project.id)?.segments
+                ?.let { SubtitleTiming.fromTranscript(it, candidate.startMs, candidate.endMs) }
+                .orEmpty()
+        val focusTrack = CandidateArtifactsCodec.decodeFocusTrack(candidate.focusTrackJson) ?: try {
+            videoEngine.detectFocusTrack(project.videoUri, candidate.startMs, candidate.endMs)
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (e: Exception) {
+            Log.w(TAG, "Trilha de foco indisponível para ${candidate.title}; usando foco central.", e)
+            null
+        }
+        return ClipSpec(
+            inputPath = project.videoUri,
+            outputPath = outputPath,
+            startMs = candidate.startMs,
+            endMs = candidate.endMs,
+            targetWidth = targetWidth,
+            targetHeight = targetHeight,
+            fps = fps,
+            bitrateBps = bitrateBps,
+            focusTrack = focusTrack,
+            subtitles = subtitles,
+            subtitleStyle = style
+        )
+    }
+
+    fun resolveStyle(key: String): com.shortsfactory.domain.model.SubtitleStyleConfig = resolveSubtitleStyle(key)
 
     private fun resolveSubtitleStyle(key: String): com.shortsfactory.domain.model.SubtitleStyleConfig {
         val style = com.shortsfactory.domain.model.SubtitleStyle.entries.firstOrNull { it.key == key }
