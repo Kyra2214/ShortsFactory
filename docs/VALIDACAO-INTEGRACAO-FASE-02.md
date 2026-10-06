@@ -2,7 +2,9 @@
 
 **Data:** 2026-10-05
 
-**Branch de validação:** `fix/ci-phase12-continuation` (PR #2)
+**Branch de validação:** `fix/ci-phase12-continuation` ([PR #3](https://github.com/Kyra2214/ShortsFactory/pull/3) para as fases 3–10; fase 2 foi integrada no PR #2)
+
+**Commit da integração atual:** `89eb92f` (o PR #2 foi mesclado antes da integração do snapshot fase 10).
 
 **Base:** `b50e851511dd71f2f3a1bf71745cc9bec19cc28d`
 

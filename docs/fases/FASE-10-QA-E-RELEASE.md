@@ -2,6 +2,8 @@
 
 **Status: implementação integrada; `:domain:test` passou localmente (139 testes, 0 falhas/erros) e as 5 verificações de crop com FFmpeg real passaram.** A validação Android completa depende da nova CI; execução do APK release em aparelho arm64 permanece pendente.
 
+**Integração atual:** commit `89eb92f`, em revisão no [PR #3](https://github.com/Kyra2214/ShortsFactory/pull/3).
+
 ## Submódulos
 | # | Submódulo | Estado |
 |---|-----------|--------|
