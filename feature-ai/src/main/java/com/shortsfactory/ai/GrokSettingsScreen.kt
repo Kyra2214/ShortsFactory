@@ -6,6 +6,9 @@ import android.net.Uri
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -18,7 +21,6 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -27,9 +29,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -43,6 +47,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.shortsfactory.core.SecureKeyStore
+import com.shortsfactory.core.ui.SfSectionTitle
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
@@ -67,14 +72,18 @@ fun GrokSettingsScreen(
     var transcriptionStatus by remember { mutableStateOf<String?>(null) }
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = { Text("IA e chaves") },
+                title = { Text("IA e chaves", style = MaterialTheme.typography.titleLarge) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar")
                     }
-                }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background
+                )
             )
         }
     ) { padding ->
@@ -82,17 +91,22 @@ fun GrokSettingsScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(16.dp)
-                .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Text("Análise de conteúdo", style = MaterialTheme.typography.titleMedium)
+            SfSectionTitle("Análise de conteúdo (xAI)")
             Text(
                 text = "Adicione uma ou mais chaves da xAI. O app consulta os modelos de texto liberados para cada chave e tenta automaticamente a próxima opção quando uma chave, modelo ou limite estiver indisponível.",
-                style = MaterialTheme.typography.bodyMedium
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
-            Card(modifier = Modifier.fillMaxWidth()) {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = MaterialTheme.shapes.large,
+                color = MaterialTheme.colorScheme.surfaceContainer
+            ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text("Como criar e configurar", style = MaterialTheme.typography.titleSmall)
                     Text(
@@ -111,7 +125,8 @@ fun GrokSettingsScreen(
                         modifier = Modifier.padding(top = 4.dp)
                     ) {
                         Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null)
-                        Text("  Abrir página para criar chaves xAI")
+                        Spacer(Modifier.width(8.dp))
+                        Text("Abrir página para criar chaves xAI")
                     }
                 }
             }
@@ -131,6 +146,7 @@ fun GrokSettingsScreen(
                         label = { Text("Chave xAI ${index + 1} (xai-...)") },
                         modifier = Modifier.weight(1f),
                         singleLine = true,
+                        shape = MaterialTheme.shapes.medium,
                         visualTransformation = PasswordVisualTransformation(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password)
                     )
@@ -148,10 +164,12 @@ fun GrokSettingsScreen(
             OutlinedButton(
                 onClick = { apiKeys = apiKeys + "" },
                 enabled = !testing,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+                shape = MaterialTheme.shapes.medium
             ) {
                 Icon(Icons.Default.Add, contentDescription = null)
-                Text("  Adicionar outra chave")
+                Spacer(Modifier.width(8.dp))
+                Text("Adicionar outra chave")
             }
 
             Button(
@@ -188,7 +206,8 @@ fun GrokSettingsScreen(
                     }
                 },
                 enabled = !testing,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+                shape = MaterialTheme.shapes.medium
             ) {
                 Text(if (testing) "Procurando uma IA disponível..." else "Testar e salvar chaves")
             }
@@ -196,19 +215,15 @@ fun GrokSettingsScreen(
                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
             }
             status?.let {
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Text(it, modifier = Modifier.padding(16.dp), style = MaterialTheme.typography.bodySmall)
-                }
+                StatusBlock(it)
             }
 
-            Text(
-                "Transcrição de áudio",
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.padding(top = 16.dp)
-            )
+            Spacer(Modifier.height(12.dp))
+            SfSectionTitle("Transcrição de áudio (OpenAI)")
             Text(
                 text = "A chave OpenAI pode ser usada para transcrição e análise de conteúdo. Ela será tentada primeiro; se estiver sem acesso ou limite, o app tentará a xAI automaticamente. O valor não é exibido novamente nem incluído nos logs.",
-                style = MaterialTheme.typography.bodyMedium
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             OutlinedTextField(
                 value = transcriptionKey,
@@ -216,6 +231,7 @@ fun GrokSettingsScreen(
                 label = { Text("Chave OpenAI (sk-...)") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
+                shape = MaterialTheme.shapes.medium,
                 visualTransformation = PasswordVisualTransformation(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password)
             )
@@ -224,7 +240,8 @@ fun GrokSettingsScreen(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null)
-                Text("  Abrir página para criar chave OpenAI")
+                Spacer(Modifier.width(8.dp))
+                Text("Abrir página para criar chave OpenAI")
             }
             Button(
                 onClick = {
@@ -257,22 +274,32 @@ fun GrokSettingsScreen(
                     }
                 },
                 enabled = !testing,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+                shape = MaterialTheme.shapes.medium
             ) {
                 Text(if (testing) "Testando OpenAI..." else "Testar e salvar OpenAI")
             }
             transcriptionStatus?.let {
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Text(it, modifier = Modifier.padding(16.dp), style = MaterialTheme.typography.bodySmall)
-                }
+                StatusBlock(it)
             }
             Text(
                 text = "As chaves ficam armazenadas criptograficamente no dispositivo. A ordem automática é OpenAI primeiro e xAI depois; o app passa para a próxima quando uma opção não está disponível.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 4.dp)
+                modifier = Modifier.padding(top = 4.dp, bottom = 16.dp)
             )
         }
+    }
+}
+
+@Composable
+private fun StatusBlock(message: String) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh
+    ) {
+        Text(message, modifier = Modifier.padding(16.dp), style = MaterialTheme.typography.bodySmall)
     }
 }
 

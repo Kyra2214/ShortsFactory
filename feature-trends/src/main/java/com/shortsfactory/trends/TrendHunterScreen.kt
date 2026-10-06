@@ -3,6 +3,7 @@ package com.shortsfactory.trends
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -10,27 +11,25 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.Checkbox
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -40,6 +39,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.shortsfactory.core.ui.SfSectionTitle
 import com.shortsfactory.domain.model.TrendCard
 import com.shortsfactory.domain.model.TrendRegion
 import com.shortsfactory.domain.trends.TrendAnalyzer
@@ -47,7 +47,7 @@ import com.shortsfactory.domain.trends.TrendSearchRepository
 import kotlinx.coroutines.launch
 
 /**
- * Item 6 do Radar — Modo "Caçador de Tendências".
+ * Modo "Caçador de Tendências" (item 6 do Radar).
  * O usuário escolhe região, nicho, plataformas (múltiplas) e período; o sistema
  * ordena os resultados por tendência/relevância/engajamento e permite criar
  * conteúdo original a partir da tendência selecionada (item 8).
@@ -59,27 +59,19 @@ fun TrendHunterScreen(
     analyzer: TrendAnalyzer,
     onBack: () -> Unit
 ) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-
-    var region by remember { mutableStateOf(TrendRegion.GLOBAL) }
-    var niche by remember { mutableStateOf("") }
-    var selectedPlatforms by remember { mutableStateOf<List<String>>(listOf("youtube", "tiktok")) }
-    var period by remember { mutableStateOf(HunterPeriods.ALL.first()) }
-    var periodExpanded by remember { mutableStateOf(false) }
-    var cards by remember { mutableStateOf<List<TrendCard>>(emptyList()) }
-    var loading by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf<String?>(null) }
-
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = { Text("Caçador de Tendências") },
+                title = { Text("Caçador de Tendências", style = MaterialTheme.typography.titleLarge) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar")
                     }
-                }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background
+                )
             )
         }
     ) { padding ->
@@ -87,188 +79,167 @@ fun TrendHunterScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(16.dp)
                 .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 8.dp)
         ) {
-            Text(
-                text = "Configure a caçada: o app consulta a IA e as plataformas selecionadas, organiza por relevância, crescimento e engajamento. Trate o resultado como análise de tendências, não como garantia de viralização.",
-                style = MaterialTheme.typography.bodyMedium
-            )
-
+            HunterContent(repository, analyzer)
             Spacer(Modifier.height(16.dp))
-            Text("Região", style = MaterialTheme.typography.titleSmall)
-            Row(modifier = Modifier.fillMaxWidth()) {
-                TrendRegion.entries.take(4).forEach { r ->
-                    OutlinedButton(
-                        onClick = { region = r },
-                        modifier = Modifier.weight(1f).padding(2.dp)
-                    ) {
-                        Text("${r.flag} ${r.label}", style = MaterialTheme.typography.bodySmall)
-                    }
-                }
-            }
-
-            Spacer(Modifier.height(12.dp))
-            OutlinedTextField(
-                value = niche,
-                onValueChange = { niche = it },
-                label = { Text("Nicho (ex.: tecnologia, humor, finanças)") },
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            Spacer(Modifier.height(12.dp))
-            Text("Plataformas", style = MaterialTheme.typography.titleSmall)
-            repository.providers().filter { it.platformKey != "grok" }.forEach { provider ->
-                val checked = provider.platformKey in selectedPlatforms
-                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                    Checkbox(
-                        checked = checked,
-                        onCheckedChange = {
-                            selectedPlatforms = if (it) selectedPlatforms + provider.platformKey
-                            else selectedPlatforms - provider.platformKey
-                        }
-                    )
-                    Text(
-                        provider.platformLabel,
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.padding(start = 4.dp)
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(12.dp))
-            Text("Período", style = MaterialTheme.typography.titleSmall)
-            ExposedDropdownMenuBox(
-                expanded = periodExpanded,
-                onExpandedChange = { periodExpanded = it }
-            ) {
-                OutlinedTextField(
-                    value = period,
-                    onValueChange = {},
-                    readOnly = true,
-                    label = { Text("Período") },
-                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = periodExpanded) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .menuAnchor()
-                )
-                ExposedDropdownMenu(
-                    expanded = periodExpanded,
-                    onDismissRequest = { periodExpanded = false }
-                ) {
-                    HunterPeriods.ALL.forEach { p ->
-                        DropdownMenuItem(
-                            text = { Text(p) },
-                            onClick = {
-                                period = p
-                                periodExpanded = false
-                            }
-                        )
-                    }
-                }
-            }
-
-            Spacer(Modifier.height(16.dp))
-            Button(
-                onClick = {
-                    loading = true
-                    error = null
-                    scope.launch {
-                        try {
-                            cards = repository.hunterSearch(
-                                region = region,
-                                platforms = selectedPlatforms,
-                                niche = niche,
-                                period = period
-                            )
-                        } catch (e: kotlinx.coroutines.CancellationException) {
-                            throw e
-                        } catch (e: Exception) {
-                            error = "Falha na caçada: ${e.message}"
-                        } finally {
-                            loading = false
-                        }
-                    }
-                },
-                modifier = Modifier.fillMaxWidth(),
-                enabled = !loading
-            ) {
-                Text(if (loading) "Caçando tendências..." else "Caçar tendências")
-            }
-
-            if (loading) {
-                CircularProgressIndicator(modifier = Modifier.padding(top = 16.dp))
-            }
-            error?.let {
-                Text(
-                    text = it,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.padding(top = 8.dp)
-                )
-            }
-
-            if (cards.isNotEmpty()) {
-                Spacer(Modifier.height(12.dp))
-                Text(
-                    text = "Resultados por relevância (${cards.size})",
-                    style = MaterialTheme.typography.titleSmall
-                )
-            }
-            cards.forEach { card ->
-                Spacer(Modifier.height(8.dp))
-                HunterCardItem(
-                    card = card,
-                    analyzer = analyzer,
-                    onOpenUrl = { url -> openUrl(context, url) },
-                    onBrief = { card -> /* briefing em card dedicado */ }
-                )
-            }
         }
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun HunterContent(repository: TrendSearchRepository, analyzer: TrendAnalyzer) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    var region by remember { mutableStateOf(TrendRegion.GLOBAL) }
+    var niche by remember { mutableStateOf("") }
+    var selectedPlatforms by remember { mutableStateOf<List<String>>(listOf("youtube", "tiktok")) }
+    var period by remember { mutableStateOf(HunterPeriods.ALL.first()) }
+    var cards by remember { mutableStateOf<List<TrendCard>>(emptyList()) }
+    var loading by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    Spacer(Modifier.height(16.dp))
+    Text(
+        text = "Consulta a IA e as plataformas selecionadas e organiza por relevância, crescimento e engajamento. É análise de tendências, não garantia de viralização.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+
+    TrendChipSection("Região") {
+        TrendRegion.entries.take(4).forEach { r ->
+            FilterChip(selected = region == r, onClick = { region = r }, label = { Text(r.label) })
+        }
+    }
+
+    Spacer(Modifier.height(16.dp))
+    OutlinedTextField(
+        value = niche,
+        onValueChange = { niche = it },
+        label = { Text("Nicho (ex.: tecnologia, humor, finanças)") },
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.medium
+    )
+
+    TrendChipSection("Plataformas") {
+        repository.providers().filter { it.platformKey != "grok" }.forEach { provider ->
+            val checked = provider.platformKey in selectedPlatforms
+            FilterChip(
+                selected = checked,
+                onClick = {
+                    selectedPlatforms = if (checked) selectedPlatforms - provider.platformKey
+                    else selectedPlatforms + provider.platformKey
+                },
+                label = { Text(provider.platformLabel) }
+            )
+        }
+    }
+
+    TrendChipSection("Período") {
+        HunterPeriods.ALL.forEach { p ->
+            FilterChip(selected = period == p, onClick = { period = p }, label = { Text(p) })
+        }
+    }
+
+    Spacer(Modifier.height(20.dp))
+    Button(
+        onClick = {
+            loading = true
+            error = null
+            scope.launch {
+                try {
+                    cards = repository.hunterSearch(
+                        region = region,
+                        platforms = selectedPlatforms,
+                        niche = niche,
+                        period = period
+                    )
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    error = "Falha na caçada: ${e.message}"
+                } finally {
+                    loading = false
+                }
+            }
+        },
+        modifier = Modifier.fillMaxWidth().height(52.dp),
+        shape = MaterialTheme.shapes.medium,
+        enabled = !loading
+    ) {
+        Text(if (loading) "Caçando tendências..." else "Caçar tendências")
+    }
+    if (loading) {
+        Spacer(Modifier.height(12.dp))
+        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+    }
+    error?.let { TrendErrorBlock(it) }
+
+    if (cards.isNotEmpty()) {
+        Spacer(Modifier.height(24.dp))
+        SfSectionTitle("Resultados por relevância (${cards.size})")
+    }
+    cards.forEach { card ->
+        Spacer(Modifier.height(10.dp))
+        HunterCardItem(
+            card = card,
+            analyzer = analyzer,
+            onOpenUrl = { url -> openUrl(context, url) }
+        )
+    }
+}
+
 @Composable
 private fun HunterCardItem(
     card: TrendCard,
     analyzer: TrendAnalyzer,
-    onOpenUrl: (String) -> Unit,
-    onBrief: (TrendCard) -> Unit
+    onOpenUrl: (String) -> Unit
 ) {
     val scope = rememberCoroutineScope()
     var briefing by remember(card.sourceUrl) { mutableStateOf<String?>(null) }
     var briefingLoading by remember(card.sourceUrl) { mutableStateOf(false) }
 
-    Card(modifier = Modifier.fillMaxWidth()) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.surfaceContainer
+    ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Row {
-                Text("🔥 ${card.title}", style = MaterialTheme.typography.titleSmall)
-                Spacer(Modifier.weight(1f))
+            Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
                 Text(
-                    if (card.order > 0) "Ordem: #${card.order}" else "",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary
+                    card.title,
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.weight(1f)
                 )
+                if (card.order > 0) {
+                    Text(
+                        "#${card.order}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(start = 8.dp)
+                    )
+                }
             }
             Text(
-                "${card.platform} • ${card.region}",
-                style = MaterialTheme.typography.bodySmall,
+                "${card.platform} · ${card.region}",
+                style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            TrendCardInfo(card)
             Spacer(Modifier.height(8.dp))
-            Row {
+            TrendCardInfo(card)
+            Spacer(Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 if (card.openable && card.sourceUrl.isNotEmpty()) {
                     OutlinedButton(
                         onClick = { onOpenUrl(card.sourceUrl) },
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text("Ver origem", style = MaterialTheme.typography.labelSmall)
+                        Text("Ver origem", style = MaterialTheme.typography.labelMedium)
                     }
                 }
-                Spacer(Modifier.width(8.dp))
-                OutlinedButton(
+                FilledTonalButton(
                     onClick = {
                         briefingLoading = true
                         briefing = null
@@ -287,16 +258,29 @@ private fun HunterCardItem(
                     modifier = Modifier.weight(1f),
                     enabled = !briefingLoading
                 ) {
-                    Text(if (briefingLoading) "Gerando..." else "Criar baseado na tendência", style = MaterialTheme.typography.labelSmall)
+                    Text(
+                        if (briefingLoading) "Gerando..." else "Criar com a tendência",
+                        style = MaterialTheme.typography.labelMedium
+                    )
                 }
             }
             if (briefingLoading) {
-                CircularProgressIndicator(modifier = Modifier.padding(top = 8.dp))
+                Spacer(Modifier.height(10.dp))
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
             }
             briefing?.let {
-                Spacer(Modifier.height(8.dp))
-                Text("Briefing:", style = MaterialTheme.typography.titleSmall)
-                Text(it, style = MaterialTheme.typography.bodySmall)
+                Spacer(Modifier.height(12.dp))
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.medium,
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text("Briefing", style = MaterialTheme.typography.labelLarge)
+                        Spacer(Modifier.height(4.dp))
+                        Text(it, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
             }
         }
     }

@@ -8,6 +8,8 @@ A base atual está estruturada para uma evolução próxima de produção. O app
 
 A análise é agendada como trabalho único por projeto. Seu estado persistente pode ser `idle`, `queued`, `running`, `done`, `failed` ou `cancelled`, com progresso, mensagem de erro, timestamp de atualização e retry controlado. A exportação mantém estado por item, progresso, tentativas, arquivo de saída e timestamps; o arquivo parcial é removido quando uma execução falha ou é cancelada.
 
+As Fases 11 e 12 estão na branch `feature/phase12-video-preview` e no [PR #4](https://github.com/Kyra2214/ShortsFactory/pull/4), validadas pelo [workflow 37530672897](https://github.com/Kyra2214/ShortsFactory/actions/runs/37530672897) no commit `6dd5565`. Até o merge do PR, o ZIP gerado por **Code → Download ZIP** sem selecionar uma branch corresponde à branch padrão `main` e não contém essas duas fases; para obter a entrega completa, selecione `feature/phase12-video-preview` no GitHub.
+
 ## Arquitetura
 
 | Módulo | Responsabilidade |
@@ -17,9 +19,10 @@ A análise é agendada como trabalho único por projeto. Seu estado persistente 
 | `domain` | Modelos, contratos, validação de mídia e pipeline independente de Android |
 | `data` | Room versão 5, migrações, DAOs, repositórios, importação e transcrição |
 | `video-engine` | FFmpeg/ffprobe local, extração/divisão de áudio, filtros e tracking facial |
-| `feature-projects` | Lista de projetos, análise, estados, progresso e cancelamento |
-| `feature-editor` | Edição de intervalos e metadata dos candidatos |
-| `feature-export` | Fila de exportação, progresso e estados por plataforma |
+| `feature-projects` | Lista de projetos, análise, estados, progresso, cancelamento e reprodução dos cortes exportados |
+| `feature-editor` | Edição de intervalos e metadata dos candidatos, com prévia rápida do trecho |
+| `feature-player` | Leitor de vídeo interno (Media3 ExoPlayer): `SfVideoPlayer`, `PlayablePath` |
+| `feature-export` | Fila de exportação, progresso e estados por plataforma; prévia fiel (`ClipPreviewManager`) |
 | `feature-ai` | Configuração do provedor Grok e da chave OpenAI de transcrição |
 | `feature-settings` e `feature-trends` | Preferências e tendências da aplicação; cada card de tendência traz origem (`OFFICIAL_API`, `AI_INFERENCE`, `LINK_ONLY`) e métricas só aparecem com origem oficial |
 
@@ -76,7 +79,7 @@ Os testes automatizados não fazem chamadas ao Grok ou à OpenAI. Testes com FFm
 
 O workflow `.github/workflows/ci.yml` executa em pushes para `main`/`master` e em pull requests. O job principal configura JDK 17 e Android SDK, valida o Gradle Wrapper e os hashes FFmpeg, executa os testes JVM (incluindo `:domain:test`), `lintDebug` + `lintRelease` e builds debug/release/test. Os uploads auxiliares de relatórios/APKs são tentados mesmo quando uma etapa falha, mas são não bloqueantes: se a quota do GitHub Actions estiver cheia, o gate de código continua avaliável, embora os artefatos não sejam armazenados.
 
-O segundo job inicializa um emulador API 35 x86_64 com userdata limitada a 4 GB para caber no disco do runner e executa `:data:connectedDebugAndroidTest`, incluindo o teste de migração Room até a versão 5. Isso não valida execução do binário FFmpeg arm64 em aparelho real. A antiga etapa de dependency review foi removida porque o repositório privado não tem GitHub Advanced Security/Dependency Graph habilitado; ela não deve ser tratada como um gate executável. A concorrência cancela uma execução antiga da mesma referência quando uma nova alteração é enviada.
+O segundo job inicializa um emulador API 35 x86_64 com userdata limitada a 4 GB para caber no disco do runner e executa `:data:connectedDebugAndroidTest`, incluindo o teste de migração Room até a versão 5. Isso não valida execução do binário FFmpeg arm64 em aparelho real. A etapa de dependency review não está habilitada neste workflow e não deve ser tratada como um gate executável. A concorrência cancela uma execução antiga da mesma referência quando uma nova alteração é enviada.
 
 A CI não recebe nem exige chaves de IA. A publicação automática em lojas, autenticação OAuth de provedores externos e distribuição de segredos de produção não fazem parte deste repositório; devem ser adicionadas posteriormente em um ambiente de release seguro.
 
@@ -94,4 +97,4 @@ O binário FFmpeg precisa estar presente para que análise e exportação reais 
 
 ## Repositório
 
-O projeto é mantido no repositório privado [Kyra2214/ShortsFactory](https://github.com/Kyra2214/ShortsFactory).
+O projeto é mantido no repositório público [Kyra2214/ShortsFactory](https://github.com/Kyra2214/ShortsFactory).

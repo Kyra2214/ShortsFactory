@@ -1,5 +1,22 @@
 # Changelog
 
+## Fase 12 — Leitor de vídeo interno (5/5, CI aprovada)
+- 12.5 Fechamento: `PreviewClipRange`, `PlayablePath.isInside`, 12 testes JVM novos, `clipEndMs` opcional no `SfVideoPlayer` e checklist em aparelho (`docs/fases/FASE-12-CHECKLIST-APARELHO.md`).
+- 12.4 Assistir exportados: `CandidateUi.exportedPath`, botão "Assistir exportado" nos cortes concluídos e diálogo com `SfVideoPlayer` em `ProjectScreen`.
+- 12.3 Prévia fiel: `assembleClipSpec` compartilhado com a exportação, `ClipPreviewManager` em 540x960 com cache por fingerprint, cancelamento e reprodução no Editor.
+- 12.2 Prévia rápida no Editor: trecho em loop em moldura 9:16, seek pelo `RangeSlider` e atualização ao soltar o controle.
+- 12.1 Módulo `:feature-player` com Media3 1.5.1, `SfVideoPlayer`, controles próprios, ciclo de vida e validação de caminho.
+- O workflow final [37530672897](https://github.com/Kyra2214/ShortsFactory/actions/runs/37530672897), no commit `6dd5565`, passou em testes JVM, lint debug/release, builds APK debug/release e testes instrumentados Room.
+
+## Fase 11 — Redesign da interface (7/7, CI aprovada)
+- 11.7 Ajustes redesenhados: chips, legenda em linhas selecionáveis, salvar só com alterações e entrada para IA e chaves.
+- 11.6 Tendências unificadas: Radar e Caçador como modos, chips e selo de origem.
+- 11.5 `ExportScreen` redesenhada com chips, contagem em destaque e ações fixas no rodapé.
+- 11.4 `ShortEditorScreen` redesenhada com `RangeSlider`, leitura do trecho, seção Publicação e ações fixas.
+- 11.3 `ProjectScreen` redesenhada com seleção de duração, score, ícones de etapa e exportação fixa.
+- 11.2 Barra de navegação inferior e `HomeScreen` redesenhada.
+- 11.1 Tema próprio em `core/ui` e componentes base `SfSectionTitle`/`SfScoreBadge`.
+
 ## Fase 10 — QA e release (Fase 10 implementada)
 - 10.4 `ShortsProcessingManagerTest` (4 testes JVM com DAOs falsos: falha parcial, reuso, intervalo editado, cancelamento); README/Roadmap alinhados. Estes testes do módulo Android aguardam a CI.
 - 10.3 `proguard-rules.pro` (Room, serialization, WorkManager worker, Tink, atributos de stack trace); CI/README com `lintDebug lintRelease`. R8 não executado.

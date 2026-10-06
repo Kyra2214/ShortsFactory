@@ -1,6 +1,20 @@
 package com.shortsfactory.app.navigation
 
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.TrendingUp
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Icon
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -9,6 +23,7 @@ import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.shortsfactory.ai.GrokSettingsScreen
@@ -24,6 +39,8 @@ import com.shortsfactory.viewmodels.ExportViewModel
 import com.shortsfactory.viewmodels.HomeViewModel
 import com.shortsfactory.viewmodels.ProjectViewModel
 
+private data class TabItem(val route: String, val label: String, val icon: ImageVector)
+
 object Routes {
     const val HOME = "home"
     const val RADAR = "radar"
@@ -37,7 +54,40 @@ object Routes {
 
 @Composable
 fun AppNavGraph(navController: NavHostController = rememberNavController()) {
-    NavHost(navController = navController, startDestination = Routes.HOME) {
+    val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route
+    val tabs = listOf(
+        TabItem(Routes.HOME, "Início", Icons.Filled.Home),
+        TabItem(Routes.RADAR, "Tendências", Icons.AutoMirrored.Filled.TrendingUp),
+        TabItem(Routes.SETTINGS, "Ajustes", Icons.Filled.Settings)
+    )
+    Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        bottomBar = {
+            if (tabs.any { it.route == currentRoute }) {
+                NavigationBar {
+                    tabs.forEach { tab ->
+                        NavigationBarItem(
+                            selected = currentRoute == tab.route,
+                            onClick = {
+                                navController.navigate(tab.route) {
+                                    popUpTo(Routes.HOME) { saveState = true }
+                                    launchSingleTop = true
+                                    restoreState = true
+                                }
+                            },
+                            icon = { Icon(tab.icon, contentDescription = null) },
+                            label = { Text(tab.label) }
+                        )
+                    }
+                }
+            }
+        }
+    ) { inner ->
+    NavHost(
+        navController = navController,
+        startDestination = Routes.HOME,
+        modifier = Modifier.padding(inner).consumeWindowInsets(inner)
+    ) {
         composable(Routes.HOME) {
             val viewModel: HomeViewModel = hiltViewModel()
             HomeScreen(
@@ -47,12 +97,10 @@ fun AppNavGraph(navController: NavHostController = rememberNavController()) {
                     val encodedUri = android.net.Uri.encode(uri ?: "")
                     navController.navigate("project/new?uri=$encodedUri")
                 },
-                onOpenRadar = { navController.navigate(Routes.RADAR) },
                 onOpenHunter = { navController.navigate(Routes.HUNTER) },
                 onOpenProject = { projectId ->
                     navController.navigate("project/$projectId")
-                },
-                onOpenSettings = { navController.navigate(Routes.SETTINGS) }
+                }
             )
         }
 
@@ -124,12 +172,13 @@ fun AppNavGraph(navController: NavHostController = rememberNavController()) {
             val startMs by viewModel.startMs.collectAsState()
             val endMs by viewModel.endMs.collectAsState()
             val videoDurationMs by viewModel.videoDurationMs.collectAsState()
+            val videoPath by viewModel.videoPath.collectAsState()
+            val previewState by viewModel.previewState.collectAsState()
             val editorError by viewModel.error.collectAsState()
             val saved by viewModel.saved.collectAsState()
             // Só volta depois de gravar com sucesso; intervalo inválido fica na tela com a mensagem.
             LaunchedEffect(saved) { if (saved) navController.popBackStack() }
             ShortEditorScreen(
-                shortId = shortId,
                 title = title,
                 hook = hook,
                 description = description,
@@ -138,11 +187,15 @@ fun AppNavGraph(navController: NavHostController = rememberNavController()) {
                 startMs = startMs,
                 endMs = endMs,
                 videoDurationMs = videoDurationMs,
+                videoPath = videoPath,
                 error = editorError,
+                previewState = previewState,
                 onSave = { title, hook, description, hashtags, cta, start, end ->
                     viewModel.saveMetadata(title, hook, description, hashtags, cta, start, end)
                 },
-                onPreview = { _, _ -> /* preview acionado via intent player */ },
+                onPreview = { viewModel.renderPreview() },
+                onCancelPreview = { viewModel.cancelPreview() },
+                onDismissPreview = { viewModel.dismissPreview() },
                 onBack = { navController.popBackStack() }
             )
         }
@@ -199,5 +252,6 @@ fun AppNavGraph(navController: NavHostController = rememberNavController()) {
         composable(Routes.GROK_SETTINGS) {
             GrokSettingsScreen(onBack = { navController.popBackStack() })
         }
+    }
     }
 }

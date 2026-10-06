@@ -77,6 +77,7 @@ dependencies {
     implementation(project(":feature-export"))
     implementation(project(":feature-settings"))
     implementation(project(":feature-trends"))
+    implementation(project(":feature-player"))
 
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.compose.ui:ui:1.7.6")
@@ -96,6 +97,7 @@ dependencies {
     ksp("com.google.dagger:hilt-android-compiler:2.56.2")
 
     implementation("androidx.work:work-runtime-ktx:2.10.0")
+    implementation("com.google.guava:guava:33.3.1-android")
     implementation("androidx.hilt:hilt-work:1.2.0")
     ksp("androidx.hilt:hilt-compiler:1.2.0")
 

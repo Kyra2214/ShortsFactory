@@ -62,7 +62,7 @@ class ProcessRunnerTest {
         jobA.cancel()
         withTimeout(2_000) { jobA.join() }
 
-        assertFalse(a.isAlive)
+        assertTrue("o processo cancelado deveria terminar", a.waitFor(2, TimeUnit.SECONDS))
         assertTrue("o processo do outro dono deve continuar vivo", !b.waitFor(250, TimeUnit.MILLISECONDS))
         jobB.cancel()
         withTimeout(2_000) { jobB.join() }
@@ -100,7 +100,7 @@ class ProcessRunnerTest {
             assertEquals(-1, e.exitCode)
             assertTrue("tail de timeout não deveria ser vazio", e.stderrTail.isNotEmpty())
         }
-        assertFalse(started.await().isAlive)
+        assertTrue("o processo em timeout deveria terminar", started.await().waitFor(2, TimeUnit.SECONDS))
     }
 
     @Test

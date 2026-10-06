@@ -268,6 +268,8 @@ class ProjectViewModel @Inject constructor(
         title = entity.title,
         hook = entity.hook,
         topic = entity.topic,
-        reason = entity.reason
+        reason = entity.reason,
+        // `localPath` é zerado pelo DAO quando o intervalo muda; `done` + arquivo existente = export vigente.
+        exportedPath = entity.localPath?.takeIf { entity.status == "done" && File(it).isFile }
     )
 }
