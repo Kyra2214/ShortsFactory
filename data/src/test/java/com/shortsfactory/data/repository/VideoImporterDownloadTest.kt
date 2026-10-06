@@ -71,8 +71,9 @@ class VideoImporterDownloadTest {
     }
 
     @Test fun `acima do limite e rejeitado antes de gravar`() {
-        server.enqueue(MockResponse().setHeader("Content-Type", "video/mp4").setHeader("Content-Length", "9000000000").setBody("x"))
+        server.enqueue(MockResponse().setBody("x").setHeader("Content-Type", "video/mp4").setHeader("Content-Length", "9000000000"))
         val r = download(url())
+        assertTrue("Esperava falha de limite, recebido: $r", r is VideoImporter.ImportResult.Failure)
         assertTrue((r as VideoImporter.ImportResult.Failure).message.contains("limite"))
         assertEquals(0, partFiles().size)
     }

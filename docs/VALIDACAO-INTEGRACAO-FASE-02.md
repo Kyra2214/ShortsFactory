@@ -4,7 +4,7 @@
 
 **Branch de validação:** `fix/ci-phase12-continuation` ([PR #3](https://github.com/Kyra2214/ShortsFactory/pull/3) para as fases 3–10; fase 2 foi integrada no PR #2)
 
-**Commit da integração atual:** `89eb92f` (o PR #2 foi mesclado antes da integração do snapshot fase 10).
+**Integração atual:** o PR #2 foi mesclado antes da integração do snapshot fase 10; a continuação está no PR #3.
 
 **Base:** `b50e851511dd71f2f3a1bf71745cc9bec19cc28d`
 
@@ -56,8 +56,10 @@ As execuções anteriores do PR terminaram como canceladas antes de iniciar qual
 - Tentativa inicial de correção: `disk-size: 6G`, valor suportado pelo [android-emulator-runner](https://github.com/ReactiveCircus/android-emulator-runner#configurations) e relatado como workaround em [android-emulator-runner#455](https://github.com/ReactiveCircus/android-emulator-runner/issues/455). No runner deste repositório não foi suficiente: continuou exigindo `7372.80 MB` para `7085.46 MB` disponíveis.
 - [Run 37387066187](https://github.com/Kyra2214/ShortsFactory/actions/runs/37387066187) — o job principal passou; o emulador voltou a falhar antes de iniciar qualquer teste Room pelo mesmo limite de espaço. Aumentado o corte para `disk-size: 4G` para deixar margem no runner.
 - Ao revisar os testes da fase 10, foi corrigido `ShortsDatabaseMigrationTest`: a cadeia inclui `MIGRATION_4_5` e o schema final é versão 5; a função e a asserção estavam incorretamente em v4. A CI agora também executa `lintRelease` junto a `lintDebug`.
+- [Run 37395753125](https://github.com/Kyra2214/ShortsFactory/actions/runs/37395753125) iniciou a execução do PR #3 e parou em `:data:testDebugUnitTest`: `VideoImporterDownloadTest` teve `ClassCastException` porque o fixture chamava `setHeader(Content-Length: 9000000000)` antes de `setBody("x")`; `setBody` repôs o tamanho para 1 e o download foi tratado como válido.
+- Correção no teste: configurar primeiro o corpo e depois o `Content-Length` manual; validar explicitamente que o resultado é `Failure`. Este sandbox não tem Android SDK, então `:data:testDebugUnitTest` local não pode ser executado; aguarda-se confirmação na nova CI.
 
-**Nova validação após integrar a fase 10, corrigir o alvo v5 e reduzir a partição do AVD para 4G:** pendente; será registrada após o workflow atualizado concluir.
+**Reexecução após corrigir o fixture:** pendente; o run anterior parou antes de lint, build e instrumentação, portanto esses gates ainda não foram avaliados neste PR.
 
 ## Limites e pendências
 

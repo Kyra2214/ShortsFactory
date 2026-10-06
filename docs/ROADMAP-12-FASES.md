@@ -1,6 +1,6 @@
 # Roadmap de implementação — 12 fases
 
-> **Estado atual (integração das Fases 2–10):** implementação publicada no commit `89eb92f` e submetida no [PR #3](https://github.com/Kyra2214/ShortsFactory/pull/3). A validação local passou em `:domain:test` (139 testes, 0 falhas) e nas 5 verificações de crop com FFmpeg real. A CI anterior passou no job principal, mas o emulador ainda não iniciou por falta de espaço; a nova execução com AVD de 4 GB está pendente. A execução em aparelho arm64 continua pendente.
+> **Estado atual (integração das Fases 2–10):** implementação em revisão no [PR #3](https://github.com/Kyra2214/ShortsFactory/pull/3). A validação local passou em `:domain:test` (139 testes, 0 falhas) e nas 5 verificações de crop com FFmpeg real. O primeiro run deste PR detectou um fixture incorreto em `VideoImporterDownloadTest` (Content-Length redefinido por `setBody`); corrigido, aguardando reexecução. A validação em aparelho arm64 continua pendente.
 >
 > **Fonte operacional:** `docs/VALIDACAO-INTEGRACAO-FASE-02.md` e os relatórios em `docs/fases/`. `docs/AUDITORIA-E-FASES.md` é uma auditoria estática histórica de um snapshot anterior; não representa sozinha o estado atual.
 

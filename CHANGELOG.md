@@ -7,6 +7,7 @@
 - 10.1 `allowBackup=false` + `data_extraction_rules.xml` (cloud-backup e device-transfer sem dados do app). Não compilado/testado.
 - Validação local integrada: `:domain:test` passou com 139 testes, 0 falhas/erros; `tools/ffmpeg-validation/validate_crop.sh` passou 5/5 verificações com FFmpeg real; checksums FFmpeg e `git diff --check` passaram.
 - CI: incluído `lintRelease`; AVD API 35 reduzido a `disk-size: 4G` após 6G ainda exceder o espaço do runner; teste de migração ajustado para verificar Room v5 (cadeia 1→5). Builds Android, lint/R8 e instrumentação aguardam a nova execução.
+- Primeira CI do PR #3 (`37395753125`) encontrou um defeito no fixture de `VideoImporterDownloadTest`: `MockResponse.setBody()` redefinia o `Content-Length` depois do cabeçalho de 9 GB. Reordenada a configuração para preservar o tamanho anunciado e adicionada asserção de tipo explícita; reexecução pendente.
 
 ## Fase 9 — Importação (Fase 9 implementada)
 - 9.4 `ImportPoliciesTest` (5) + `VideoImporterDownloadTest` com `MockWebServer` (9); `mockwebserver` e `isReturnDefaultValues` no módulo `data`. Escritos, não executados.

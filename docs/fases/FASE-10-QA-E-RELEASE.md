@@ -2,7 +2,7 @@
 
 **Status: implementação integrada; `:domain:test` passou localmente (139 testes, 0 falhas/erros) e as 5 verificações de crop com FFmpeg real passaram.** A validação Android completa depende da nova CI; execução do APK release em aparelho arm64 permanece pendente.
 
-**Integração atual:** commit `89eb92f`, em revisão no [PR #3](https://github.com/Kyra2214/ShortsFactory/pull/3).
+**Integração atual:** em revisão no [PR #3](https://github.com/Kyra2214/ShortsFactory/pull/3).
 
 ## Submódulos
 | # | Submódulo | Estado |
@@ -45,6 +45,7 @@ ASSUMINDO: o `ShortsProcessingManager` roda em JVM com `ContextWrapper(null)` + 
 - A execução [37387066187](https://github.com/Kyra2214/ShortsFactory/actions/runs/37387066187), anterior à integração desta fase, passou no job principal. O emulador API 35 ainda falhou antes dos testes: mesmo com `disk-size: 6G`, pediu `7372.80 MB` com `7085.46 MB` disponíveis.
 - Ajustado o AVD para `disk-size: 4G`, com margem de espaço maior, e o job agora inclui `lintRelease` além de `lintDebug`.
 - Corrigido o teste de migração `migrateV1ToV4`: a cadeia inclui `MIGRATION_4_5` e o banco declara versão 5; o nome e a asserção agora verificam v5.
-- A validação da fase 10 completa e o teste instrumentado permanecem pendentes da nova execução do Actions.
+- O [run 37395753125](https://github.com/Kyra2214/ShortsFactory/actions/runs/37395753125) executou o job principal, mas parou em `:data:testDebugUnitTest`: `VideoImporterDownloadTest` esperava falha por limite e recebeu sucesso porque `MockResponse.setBody()` substituiu o `Content-Length: 9000000000` definido antes. A ordem do fixture foi corrigida (corpo primeiro, cabeçalho depois) e foi adicionada uma asserção explícita; a nova validação continua pendente.
+- A tentativa local de `:data:testDebugUnitTest` não pôde rodar neste sandbox por ausência do Android SDK; a correção será confirmada no Actions.
 - Evidência local após a integração: `:domain:test` — 139 testes, 22 suítes, 0 falhas/erros/ignorados; `bash tools/ffmpeg-validation/validate_crop.sh` — 5/5; checksums FFmpeg — OK.
 - Este sandbox não tem Android SDK configurado; `testDebugUnitTest`, lint/R8, APKs e Room instrumentado devem ser confirmados pelo workflow do GitHub.
