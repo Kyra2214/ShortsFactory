@@ -80,11 +80,11 @@ fun ShortEditorScreen(
     var ctaText by remember(cta) { mutableStateOf(cta) }
     var startText by remember(startMs) { mutableFloatStateOf(startMs.toFloat()) }
     var endText by remember(endMs) { mutableFloatStateOf(endMs.toFloat()) }
+    var previewStart by remember(startMs) { mutableFloatStateOf(startMs.toFloat()) }
+    var previewEnd by remember(endMs) { mutableFloatStateOf(endMs.toFloat()) }
     val previewClip = PreviewClipRange.resolve(previewStart.toLong(), previewEnd.toLong(), videoDurationMs)
     val rangeDirty = startText.toLong() != startMs || endText.toLong() != endMs
     val maxMs = videoDurationMs.coerceAtLeast(1000L).toFloat()
-    var previewStart by remember(startMs) { mutableFloatStateOf(startMs.toFloat()) }
-    var previewEnd by remember(endMs) { mutableFloatStateOf(endMs.toFloat()) }
 
     if (previewState !is PreviewUiState.Idle) {
         FaithfulPreviewDialog(previewState, onCancelPreview, onDismissPreview)
