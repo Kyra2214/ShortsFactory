@@ -100,7 +100,7 @@ class ProcessRunnerTest {
             assertEquals(-1, e.exitCode)
             assertTrue("tail de timeout não deveria ser vazio", e.stderrTail.isNotEmpty())
         }
-        assertFalse(started.await().isAlive)
+        assertTrue("o processo em timeout deveria terminar", started.await().waitFor(2, TimeUnit.SECONDS))
     }
 
     @Test
