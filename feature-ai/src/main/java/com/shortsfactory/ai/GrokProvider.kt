@@ -85,7 +85,7 @@ internal data class ChatProviderConfig(
  * A API de modelos é consultada para priorizar os modelos de texto liberados para cada chave.
  * Quando uma chave ou modelo falha, a próxima combinação é tentada automaticamente.
  */
-internal open class GrokProvider(
+internal open class FreeApiChatProvider(
     private val keyStore: SecureKeyStore,
     private val config: ChatProviderConfig = ChatProviderConfig.xAi(),
     private val keyProvider: () -> List<String> = { keyStore.getApiKeys() }
