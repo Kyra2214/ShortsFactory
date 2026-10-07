@@ -16,7 +16,6 @@ class TrendSearchRepositoryImpl @Inject constructor(
 ) : TrendSearchRepository {
 
     private val allProviders: List<TrendProvider> = listOf(
-        GrokTrendProvider(aiProvider),
         YouTubeTrendProvider,
         InstagramTrendProvider,
         TikTokTrendProvider,
@@ -60,8 +59,8 @@ class TrendSearchRepositoryImpl @Inject constructor(
         niche: String,
         period: String
     ): List<TrendCard> = coroutineScope {
-        // Primeiro consulta o feed público por país; rede/país/nicho sem resultados levam à IA.
-        // Cancelamento do chamador precisa continuar propagando, não virar uma busca bem-sucedida vazia.
+        // Pesquisa híbrida: Google Trends + IA gratuita em paralelo.
+        // O RSS ter resultados não desliga a IA.
         val googleCards = try {
             GoogleTrendsSource.fetch(region, niche)
         } catch (cancelled: CancellationException) {
@@ -70,19 +69,17 @@ class TrendSearchRepositoryImpl @Inject constructor(
             emptyList()
         }
         val aiResults = async {
-            if (googleCards.isNotEmpty()) {
-                emptyList()
-            } else {
-                val query = "${niche.ifEmpty { "tendências gerais" }} $period".trim()
+            val query = niche.ifEmpty { "tendências gerais" } + " " + period
+            runCatching {
                 aiProvider.searchTrends(
-                    query = query,
+                    query = query.trim(),
                     region = region.key,
                     platform = platforms.joinToString(",").ifEmpty { "qualquer" },
                     niche = niche.ifEmpty { "geral" }
                 )
-            }
+            }.getOrElse { emptyList() }
         }
-        // Provedores oficiais com API retornam dados; demais redirecionam ao site
+        // Plataformas sem API pública integrada são links explícitos, não dados coletados.
         val platformCards = async {
             platforms.filter { it != GROK_KEY }.mapNotNull { key ->
                 allProviders.firstOrNull { it.platformKey == key }

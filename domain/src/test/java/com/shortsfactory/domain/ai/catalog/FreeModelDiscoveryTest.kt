@@ -49,21 +49,22 @@ class FreeModelDiscoveryTest {
     }
 
     @Test
-    fun selectSemPrecoDescartaNaoTextoEPriorizaLeves() {
+    fun selectSemPrecoNaoAssumeQueModeloEhGratuito() {
         val result = FreeModelDiscovery.select(
             listOf(
                 DiscoveredModel("big-model", null),
                 DiscoveredModel("text-embedding-3", null),
                 DiscoveredModel("whisper-large", null),
-                DiscoveredModel("model-flash", null)
+                DiscoveredModel("model-flash", null),
+                DiscoveredModel("model-explicit:free", true)
             )
         )
-        assertEquals(listOf("model-flash", "big-model"), result)
+        assertEquals(listOf("model-explicit:free"), result)
     }
 
     @Test
     fun selectLimitaQuantidade() {
-        val many = (1..20).map { DiscoveredModel("m$it", null) }
+        val many = (1..20).map { DiscoveredModel("m$it:free", true) }
         assertEquals(FreeModelDiscovery.MAX_MODELS, FreeModelDiscovery.select(many).size)
     }
 }

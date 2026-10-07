@@ -11,16 +11,16 @@ import com.shortsfactory.domain.model.TrendCard
 import com.shortsfactory.domain.model.Transcript
 import com.shortsfactory.domain.pipeline.GenerationSummaryHint
 
-/** Provedor OpenAI-compatível do catálogo gratuito; reaproveita a camada de chat do [GrokProvider]. */
+/** Provedor OpenAI-compatível do catálogo gratuito; usa o adaptador de chat gratuito comum. */
 internal class FreeApiProvider(
     keyStore: SecureKeyStore,
     entry: ApiProviderEntry
-) : GrokProvider(
+) : FreeApiChatProvider(
     keyStore = keyStore,
     config = ChatProviderConfig.free(entry),
     keyProvider = { keyStore.getProviderKeys(entry.id) }
 ) {
-    // searchTrends NÃO é sobrescrito: herda o do GrokProvider (chat OpenAI-compatível),
+    // searchTrends NÃO é sobrescrito: usa o adaptador de chat gratuito (chat OpenAI-compatível),
     // então cada API gratuita com chave participa do fallback em vez de falhar na hora.
 }
 
