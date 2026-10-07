@@ -16,7 +16,6 @@ class TrendSearchRepositoryImpl @Inject constructor(
 ) : TrendSearchRepository {
 
     private val allProviders: List<TrendProvider> = listOf(
-        GrokTrendProvider(aiProvider),
         YouTubeTrendProvider,
         InstagramTrendProvider,
         TikTokTrendProvider,
@@ -36,53 +35,7 @@ class TrendSearchRepositoryImpl @Inject constructor(
         platform: String,
         niche: String
     ): List<TrendCard> = coroutineScope {
-        val aiResults = async {
-            aiProvider.searchTrends(
-                query = query,
-                region = region.key,
-                platform = platform,
-                niche = niche
-            )
-        }
-        val platformCards = async {
-            // "grok" já é coberto por aiResults; chamar o provider repetiria a chamada de IA.
-            allProviders
-                .firstOrNull { it.platformKey == platform && it.platformKey != GROK_KEY }
-                ?.search(query, region, niche)
-                ?: emptyList()
-        }
-        aiResults.await() + platformCards.await()
-    }
-
-    override suspend fun hunterSearch(
-        region: TrendRegion,
-        platforms: List<String>,
-        niche: String,
-        period: String
-    ): List<TrendCard> = coroutineScope {
-        // Primeiro consulta o feed público por país; rede/país/nicho sem resultados levam à IA.
-        // Cancelamento do chamador precisa continuar propagando, não virar uma busca bem-sucedida vazia.
-        val googleCards = try {
-            GoogleTrendsSource.fetch(region, niche)
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: Exception) {
-            emptyList()
-        }
-        val aiResults = async {
-            if (googleCards.isNotEmpty()) {
-                emptyList()
-            } else {
-                val query = "${niche.ifEmpty { "tendências gerais" }} $period".trim()
-                aiProvider.searchTrends(
-                    query = query,
-                    region = region.key,
-                    platform = platforms.joinToString(",").ifEmpty { "qualquer" },
-                    niche = niche.ifEmpty { "geral" }
-                )
-            }
-        }
-        // Provedores oficiais com API retornam dados; demais redirecionam ao site
+        val aiResults = async {\n            val query = "\${niche.ifEmpty { \"tendências gerais\" }} $period".trim()\n            runCatching {\n                aiProvider.searchTrends(\n                    query = query,\n                    region = region.key,\n                    platform = platforms.joinToString(",").ifEmpty { "qualquer" },\n                    niche = niche.ifEmpty { "geral" }\n                )\n            }.getOrElse { emptyList() }\n        }\n        // Plataformas sem API pública integrada continuam como links explícitos; não são dados de tendência.
         val platformCards = async {
             platforms.filter { it != GROK_KEY }.mapNotNull { key ->
                 allProviders.firstOrNull { it.platformKey == key }
