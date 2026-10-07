@@ -42,8 +42,9 @@ object FreeModelDiscovery {
      */
     fun select(discovered: List<DiscoveredModel>): List<String> {
         val chat = discovered.filter { m -> NON_TEXT.none { m.id.lowercase().contains(it) } }
-        val priced = chat.filter { it.free != null }
-        val pool = if (priced.isNotEmpty()) priced.filter { it.free == true } else chat
+        // Free-only: sem preço explícito, não assumimos que o modelo é gratuito.
+        // Nessa situação, só entram modelos marcados explicitamente como :free.
+        val pool = chat.filter { it.free == true }
         return pool
             .sortedBy { m -> if (LIGHT_HINTS.any { m.id.lowercase().contains(it) }) 0 else 1 }
             .map { it.id }
