@@ -34,7 +34,14 @@ class MultiAIProvider(
         region: String,
         platform: String,
         niche: String
-    ): List<TrendCard> = withFallback(record = false) { it.searchTrends(query, region, platform, niche) }
+    ): List<TrendCard> = withFallback { provider ->
+        provider.searchTrends(query, region, platform, niche).also { results ->
+            // Resultado vazio não é sucesso para pesquisa: permite cair para a próxima API/modelo.
+            if (results.isEmpty()) {
+                throw AiException("Provedor " + provider.providerName + " retornou pesquisa vazia.")
+            }
+        }
+    }
 
     override suspend fun analyzeTrends(query: String, region: String): String =
         withFallback { it.analyzeTrends(query, region) }
