@@ -20,13 +20,8 @@ internal class FreeApiProvider(
     config = ChatProviderConfig.free(entry),
     keyProvider = { keyStore.getProviderKeys(entry.id) }
 ) {
-    /** Provedores gratuitos não têm busca ao vivo: o `MultiAIProvider` segue para o próximo. */
-    override suspend fun searchTrends(
-        query: String,
-        region: String,
-        platform: String,
-        niche: String
-    ): List<TrendCard> = throw AiException("$providerName não oferece busca de tendências ao vivo.")
+    // searchTrends NÃO é sobrescrito: herda o do GrokProvider (chat OpenAI-compatível),
+    // então cada API gratuita com chave participa do fallback em vez de falhar na hora.
 }
 
 /**

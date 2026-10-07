@@ -40,7 +40,7 @@ A API aceita arquivos de até 25 MB. Para arquivos maiores, o app extrai o áudi
 
 ## APIs gratuitas de IA (opcional)
 
-Em Ajustes → APIs gratuitas, o usuário cadastra chaves de provedores com plano gratuito (catálogo `ai_api_catalog.json`, 10 provedores). Cada provedor fica desligado até uma chave ser validada e salva (`SecureKeyStore`, criptografado). A lista de modelos vem da API do provedor em tempo de execução (só modelos gratuitos quando há preço; no máximo 5 por chave) e o roteamento entre provedores usa estatística de sucesso, latência e quarentena após falhas. A transcrição do vídeo é enviada ao provedor escolhido e sai do aparelho (provedores da China exigem atenção extra). Provedores gratuitos não têm busca de tendências ao vivo. A ordem automática é OpenAI, xAI e, por último, as APIs gratuitas.
+Em Ajustes → APIs gratuitas, o usuário cadastra chaves de provedores com plano gratuito (catálogo `ai_api_catalog.json`, 10 provedores). Cada provedor fica desligado até uma chave ser validada e salva (`SecureKeyStore`, criptografado). A lista de modelos vem da API do provedor em tempo de execução (só modelos gratuitos quando há preço; no máximo 5 por chave) e o roteamento entre provedores usa estatística de sucesso, latência e quarentena após falhas. Transcrição e prompts enviados ao provedor escolhido saem do aparelho (provedores da China exigem atenção extra). Esses modelos podem gerar inferências sobre tendências, mas não fornecem métricas oficiais nem uma fonte validada de tendências ao vivo. A ordem automática é OpenAI, xAI e, por último, as APIs gratuitas.
 
 ## Exportação por plataforma e textos de publicação
 
@@ -96,7 +96,7 @@ A CI não recebe nem exige chaves de IA. A publicação automática em lojas, au
 ## Importação, tendências e release
 
 - **Importação:** limite de 8 GiB, checagem de espaço livre, timeouts de rede, retomada com `Range`/`If-Range` (parcial em `filesDir` com validador) e `rename` atômico; a extensão vem do `Content-Type`/MIME e o arquivo só vira projeto depois de `probe` + `MediaValidator`. DRM, login e paywall não são contornados.
-- **Tendências:** cada card informa a origem (`OFFICIAL_API`, `AI_INFERENCE`, `LINK_ONLY`); visualizações e engajamento só aparecem com origem oficial. Hoje nenhum provedor tem API oficial integrada: o Grok devolve inferência da IA (rotulada) e os demais, apenas links de busca.
+- **Tendências:** cada card informa a origem (`OFFICIAL_API`, `AI_INFERENCE`, `LINK_ONLY`); visualizações e engajamento só aparecem com origem oficial. O Caçador tenta primeiro o RSS público do Google Trends para Brasil, EUA, Japão e Coreia do Sul, filtrando por palavras do nicho; em país sem feed, erro de rede ou ausência de correspondências, recorre aos provedores de IA configurados. O Google Trends não informa métricas de vídeo e seus cards abrem uma busca pelo assunto. Grok e APIs gratuitas geram inferências rotuladas; os demais provedores oferecem links de busca. O feed segue a janela corrente do RSS e não aplica os períodos da tela. Veja [a nota técnica sobre o feed e o fallback](docs/fixes/GOOGLE-TRENDS-E-FALLBACK-IA.md).
 - **Release:** `minify` + `shrinkResources` com regras em `app/proguard-rules.pro` (R8 ainda não validado em aparelho). `allowBackup` está desligado e `data_extraction_rules.xml` exclui tudo de backup/transferência (chaves no Keystore não migram). A saída do ffmpeg só vai ao logcat em build debuggable; o `stderr` guardado no erro é limitado a ~2 KB.
 
 ## Privacidade e limitações

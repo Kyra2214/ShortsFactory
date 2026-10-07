@@ -6,6 +6,7 @@ import com.shortsfactory.domain.model.TrendCard
 import com.shortsfactory.domain.model.TrendRegion
 import com.shortsfactory.domain.trends.TrendProvider
 import com.shortsfactory.domain.trends.TrendSearchRepository
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import javax.inject.Inject
@@ -59,15 +60,27 @@ class TrendSearchRepositoryImpl @Inject constructor(
         niche: String,
         period: String
     ): List<TrendCard> = coroutineScope {
-        // IA retorna tendências reais em alta para região/nicho/plataformas/período
+        // Primeiro consulta o feed público por país; rede/país/nicho sem resultados levam à IA.
+        // Cancelamento do chamador precisa continuar propagando, não virar uma busca bem-sucedida vazia.
+        val googleCards = try {
+            GoogleTrendsSource.fetch(region, niche)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            emptyList()
+        }
         val aiResults = async {
-            val query = "${niche.ifEmpty { "tendências gerais" }} $period".trim()
-            aiProvider.searchTrends(
-                query = query,
-                region = region.key,
-                platform = platforms.joinToString(",").ifEmpty { "qualquer" },
-                niche = niche.ifEmpty { "geral" }
-            )
+            if (googleCards.isNotEmpty()) {
+                emptyList()
+            } else {
+                val query = "${niche.ifEmpty { "tendências gerais" }} $period".trim()
+                aiProvider.searchTrends(
+                    query = query,
+                    region = region.key,
+                    platform = platforms.joinToString(",").ifEmpty { "qualquer" },
+                    niche = niche.ifEmpty { "geral" }
+                )
+            }
         }
         // Provedores oficiais com API retornam dados; demais redirecionam ao site
         val platformCards = async {
@@ -76,7 +89,7 @@ class TrendSearchRepositoryImpl @Inject constructor(
                     ?.search("", region, niche.ifEmpty { "trending" })
             }.flatten()
         }
-        val all = aiResults.await() + platformCards.await()
+        val all = googleCards + aiResults.await() + platformCards.await()
         all.mapIndexed { index, card -> card.copy(order = index + 1) }
     }
 }

@@ -1,5 +1,11 @@
 # Changelog
 
+## Correções — Google Trends e fallback de IA
+- Adicionado feed RSS público do Google Trends para BR, US, JP e KR, com filtro textual por nicho, limites de rede, até 15 resultados e fallback para IA em país não suportado, erro ou ausência de correspondências.
+- APIs gratuitas OpenAI-compatíveis agora herdam a busca de tendências do `GrokProvider` e participam do fallback/roteamento existente; resultados do modelo permanecem inferências, sem métricas oficiais.
+- Preservado o cancelamento de coroutine na consulta ao feed; o parser aceita nomes de tags RSS com ou sem prefixo XML. Testes unitários cobrem filtro vazio, busca em título/notícias e palavra inteira.
+- Documentação técnica: [`docs/fixes/GOOGLE-TRENDS-E-FALLBACK-IA.md`](docs/fixes/GOOGLE-TRENDS-E-FALLBACK-IA.md).
+
 ## Fase 14 — Exportação por plataforma e metadados (7/7, CI pendente)
 - 14.7 Fechamento: `PlatformProfilesTest`, `ExportPlannerTest`, `PlatformMetadataTest`, `PlatformSelectorTest` (31 testes JVM), `FASE-14-CHECKLIST-APARELHO.md`, README. Suíte Gradle não executada no ambiente (sem Gradle/rede); validar na CI.
 - 14.6 Escolha de plataformas pela IA: `PlatformSelector`/`PlatformSuggestionParser` no `domain` (justificativa obrigatória, só plataformas candidatas que comportam a duração), `ExportViewModel.suggestPlatforms` e seção na tela. Não compilado/testado.
