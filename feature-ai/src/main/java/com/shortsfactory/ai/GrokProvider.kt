@@ -359,9 +359,3 @@ Não invente métricas. O objetivo é inspirar criação original, nunca reprodu
     }
 }
 
-/** OpenAI usa a mesma camada de chat, mas lê a chave já cadastrada para transcrição. */
-internal class OpenAiProvider(keyStore: SecureKeyStore) : GrokProvider(
-    keyStore = keyStore,
-    config = ChatProviderConfig.openAi(),
-    keyProvider = { listOfNotNull(keyStore.getTranscriptionApiKey()) }
-)
