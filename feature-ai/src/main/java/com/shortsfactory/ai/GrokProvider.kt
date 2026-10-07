@@ -47,35 +47,6 @@ internal data class ChatProviderConfig(
             }
         )
 
-        fun xAi() = ChatProviderConfig(
-            displayName = "IA xAI/Grok",
-            chatEndpoint = "https://api.x.ai/v1/chat/completions",
-            modelsEndpoint = "https://api.x.ai/v1/models",
-            defaultModels = listOf("grok-4.6", "grok-4-fast", "grok-3-mini"),
-            modelFilter = { model ->
-                val normalized = model.lowercase()
-                normalized.startsWith("grok") &&
-                    !normalized.contains("imagine") &&
-                    !normalized.contains("video") &&
-                    !normalized.contains("image") &&
-                    !normalized.contains("voice")
-            }
-        )
-
-        fun openAi() = ChatProviderConfig(
-            displayName = "OpenAI",
-            chatEndpoint = "https://api.openai.com/v1/chat/completions",
-            modelsEndpoint = "https://api.openai.com/v1/models",
-            defaultModels = listOf("gpt-4o-mini", "gpt-4.1-mini", "gpt-4o"),
-            modelFilter = { model ->
-                val normalized = model.lowercase()
-                normalized.startsWith("gpt-") &&
-                    !normalized.contains("audio") &&
-                    !normalized.contains("image") &&
-                    !normalized.contains("realtime") &&
-                    !normalized.contains("transcribe")
-            }
-        )
     }
 }
 
@@ -87,7 +58,7 @@ internal data class ChatProviderConfig(
  */
 internal open class FreeApiChatProvider(
     private val keyStore: SecureKeyStore,
-    private val config: ChatProviderConfig = ChatProviderConfig.xAi(),
+    private val config: ChatProviderConfig,
     private val keyProvider: () -> List<String> = { keyStore.getApiKeys() }
 ) : AIProvider {
 
