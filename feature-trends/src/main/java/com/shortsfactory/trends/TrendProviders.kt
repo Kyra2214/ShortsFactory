@@ -35,7 +35,51 @@ class TrendSearchRepositoryImpl @Inject constructor(
         platform: String,
         niche: String
     ): List<TrendCard> = coroutineScope {
-        val aiResults = async {\n            val query = "\${niche.ifEmpty { \"tendências gerais\" }} $period".trim()\n            runCatching {\n                aiProvider.searchTrends(\n                    query = query,\n                    region = region.key,\n                    platform = platforms.joinToString(",").ifEmpty { "qualquer" },\n                    niche = niche.ifEmpty { "geral" }\n                )\n            }.getOrElse { emptyList() }\n        }\n        // Plataformas sem API pública integrada continuam como links explícitos; não são dados de tendência.
+        val aiResults = async {
+            aiProvider.searchTrends(
+                query = query,
+                region = region.key,
+                platform = platform,
+                niche = niche
+            )
+        }
+        val platformCards = async {
+            // "grok" já é coberto por aiResults; chamar o provider repetiria a chamada de IA.
+            allProviders
+                .firstOrNull { it.platformKey == platform && it.platformKey != GROK_KEY }
+                ?.search(query, region, niche)
+                ?: emptyList()
+        }
+        aiResults.await() + platformCards.await()
+    }
+
+    override suspend fun hunterSearch(
+        region: TrendRegion,
+        platforms: List<String>,
+        niche: String,
+        period: String
+    ): List<TrendCard> = coroutineScope {
+        // Pesquisa híbrida: Google Trends + IA gratuita em paralelo.
+        // O RSS ter resultados não desliga a IA.
+        val googleCards = try {
+            GoogleTrendsSource.fetch(region, niche)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            emptyList()
+        }
+        val aiResults = async {
+            val query = niche.ifEmpty { "tendências gerais" } + " " + period
+            runCatching {
+                aiProvider.searchTrends(
+                    query = query.trim(),
+                    region = region.key,
+                    platform = platforms.joinToString(",").ifEmpty { "qualquer" },
+                    niche = niche.ifEmpty { "geral" }
+                )
+            }.getOrElse { emptyList() }
+        }
+        // Plataformas sem API pública integrada são links explícitos, não dados coletados.
         val platformCards = async {
             platforms.filter { it != GROK_KEY }.mapNotNull { key ->
                 allProviders.firstOrNull { it.platformKey == key }
@@ -45,7 +89,6 @@ class TrendSearchRepositoryImpl @Inject constructor(
         val all = googleCards + aiResults.await() + platformCards.await()
         all.mapIndexed { index, card -> card.copy(order = index + 1) }
     }
-}
 
 private const val GROK_KEY = "grok"
 
