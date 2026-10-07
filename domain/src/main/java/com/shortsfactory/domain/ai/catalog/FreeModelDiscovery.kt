@@ -37,8 +37,8 @@ object FreeModelDiscovery {
     }
 
     /**
-     * Candidatos em ordem de tentativa. Com informação de preço, só entram modelos gratuitos; sem ela,
-     * entram modelos de chat com nome de porte leve primeiro. Limitado a [MAX_MODELS].
+     * Candidatos em ordem de tentativa. Só entram modelos comprovadamente gratuitos;
+     * quando a API não informa preço, apenas o sufixo explícito :free é aceito. Limitado a [MAX_MODELS].
      */
     fun select(discovered: List<DiscoveredModel>): List<String> {
         val chat = discovered.filter { m -> NON_TEXT.none { m.id.lowercase().contains(it) } }
