@@ -89,6 +89,7 @@ class TrendSearchRepositoryImpl @Inject constructor(
         val all = googleCards + aiResults.await() + platformCards.await()
         all.mapIndexed { index, card -> card.copy(order = index + 1) }
     }
+}
 
 private const val GROK_KEY = "grok"
 
