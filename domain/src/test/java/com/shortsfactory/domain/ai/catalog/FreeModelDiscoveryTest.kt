@@ -64,7 +64,7 @@ class FreeModelDiscoveryTest {
 
     @Test
     fun selectLimitaQuantidade() {
-        val many = (1..20).map { DiscoveredModel("m$it", null) }
+        val many = (1..20).map { DiscoveredModel("m$it:free", true) }
         assertEquals(FreeModelDiscovery.MAX_MODELS, FreeModelDiscovery.select(many).size)
     }
 }
