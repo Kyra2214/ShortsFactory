@@ -49,16 +49,17 @@ class FreeModelDiscoveryTest {
     }
 
     @Test
-    fun selectSemPrecoDescartaNaoTextoEPriorizaLeves() {
+    fun selectSemPrecoNaoAssumeQueModeloEhGratuito() {
         val result = FreeModelDiscovery.select(
             listOf(
                 DiscoveredModel("big-model", null),
                 DiscoveredModel("text-embedding-3", null),
                 DiscoveredModel("whisper-large", null),
-                DiscoveredModel("model-flash", null)
+                DiscoveredModel("model-flash", null),
+                DiscoveredModel("model-explicit:free", true)
             )
         )
-        assertEquals(listOf("model-flash", "big-model"), result)
+        assertEquals(listOf("model-explicit:free"), result)
     }
 
     @Test
